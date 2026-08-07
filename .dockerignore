@@ -1,0 +1,12 @@
+.git
+.github
+.codestable
+.idea
+.vscode
+build
+dist
+storage
+tmp
+*.exe
+*.log
+*.tmp

@@ -38,10 +38,11 @@ type Migration interface {
 
 // MigrationContext 迁移上下文，包含迁移脚本需要的依赖
 type MigrationContext struct {
-	Logger       *zap.Logger
-	DatabasePath string   // 数据库文件路径（用于 SQLite）
-	DatabaseType string   // 数据库类型
-	Dao          *dao.Dao // Dao 实例，用于处理租户/用户库
+	Logger           *zap.Logger
+	DatabasePath     string   // 数据库文件路径（用于 SQLite）
+	DatabaseType     string   // 主数据库类型
+	UserDatabaseType string   // 用户数据库类型
+	Dao              *dao.Dao // Dao 实例，用于处理租户/用户库
 }
 
 // MigrationManager 升级管理器
@@ -71,6 +72,7 @@ func NewMigrationManager(db *gorm.DB, logger *zap.Logger, version string, cfg, u
 			&NoteHistoryRenameMigrate{},
 			&UserEmailLowercaseMigrate{},
 			&BackupRetentionDefaultMigrate{},
+			&SafeRevisionSyncMigrate{},
 		},
 	}
 }
@@ -170,11 +172,16 @@ func (m *MigrationManager) Run(ctx context.Context) error {
 		// 在事务中执行升级
 		if err := m.db.Transaction(func(tx *gorm.DB) error {
 			// 创建迁移上下文
+			userDatabaseType := ""
+			if m.userConfig != nil {
+				userDatabaseType = m.userConfig.Type
+			}
 			mc := &MigrationContext{
-				Logger:       m.logger,
-				DatabasePath: m.config.Path,
-				DatabaseType: m.config.Type,
-				Dao:          d,
+				Logger:           m.logger,
+				DatabasePath:     m.config.Path,
+				DatabaseType:     m.config.Type,
+				UserDatabaseType: userDatabaseType,
+				Dao:              d,
 			}
 			// 执行升级脚本
 			if err := migration.Up(tx, context.Background(), mc); err != nil {

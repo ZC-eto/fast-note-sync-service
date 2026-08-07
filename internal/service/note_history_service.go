@@ -67,16 +67,17 @@ type noteHistoryService struct {
 	sf             *singleflight.Group          // Singleflight group // 并发请求合并组
 	logger         *zap.Logger                  // Logger // 日志对象
 	config         *AppServiceConfig            // Service configuration // 服务配置
+	strictGuard    *StrictVaultWriteGuard
 }
 
 // NewNoteHistoryService creates NoteHistoryService instance
 // NewNoteHistoryService 创建 NoteHistoryService 实例
-func NewNoteHistoryService(historyRepo domain.NoteHistoryRepository, noteRepo domain.NoteRepository, userRepo domain.UserRepository, vaultSvc VaultService, folderSvc FolderService, noteSvc NoteService, backupSvc BackupService, gitSyncSvc GitSyncService, logger *zap.Logger, config *AppServiceConfig) NoteHistoryService {
+func NewNoteHistoryService(historyRepo domain.NoteHistoryRepository, noteRepo domain.NoteRepository, userRepo domain.UserRepository, vaultSvc VaultService, folderSvc FolderService, noteSvc NoteService, backupSvc BackupService, gitSyncSvc GitSyncService, logger *zap.Logger, config *AppServiceConfig, guards ...*StrictVaultWriteGuard) NoteHistoryService {
 	if config == nil {
 		defaultHistoryKeepVersions := 100
 		config = &AppServiceConfig{HistoryKeepVersions: &defaultHistoryKeepVersions}
 	}
-	return &noteHistoryService{
+	service := &noteHistoryService{
 		historyRepo:    historyRepo,
 		noteRepo:       noteRepo,
 		userRepo:       userRepo,
@@ -89,6 +90,10 @@ func NewNoteHistoryService(historyRepo domain.NoteHistoryRepository, noteRepo do
 		logger:         logger,
 		config:         config,
 	}
+	if len(guards) > 0 {
+		service.strictGuard = guards[0]
+	}
+	return service
 }
 
 // domainToDTO converts domain model to DTO (includes diff calculation)
@@ -316,6 +321,9 @@ func (s *noteHistoryService) RestoreFromHistory(ctx context.Context, uid int64, 
 			return nil, code.ErrorHistoryNotFound
 		}
 		return nil, code.ErrorDBQuery.WithDetails(err.Error())
+	}
+	if err := s.strictGuard.CheckLegacyWrite(ctx, uid, history.VaultID); err != nil {
+		return nil, err
 	}
 
 	// 2. Get current note

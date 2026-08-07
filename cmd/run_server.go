@@ -158,6 +158,9 @@ func NewServer(runEnv *runFlags) (*Server, error) {
 	); err != nil {
 		return nil, fmt.Errorf("upgrade.Execute: %w", err)
 	}
+	if err := s.app.RecoverPreparedSafeSyncOperations(context.Background()); err != nil {
+		return nil, fmt.Errorf("recover prepared safe sync operations: %w", err)
+	}
 
 	// Initialize validator
 	// 初始化验证器

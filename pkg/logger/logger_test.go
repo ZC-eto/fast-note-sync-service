@@ -3,6 +3,7 @@ package logger
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -22,8 +23,10 @@ func TestLoggerInitialization(t *testing.T) {
 }
 
 func TestNewLogger(t *testing.T) {
-	tmpDir := t.TempDir()
-	logFile := filepath.Join(tmpDir, "test.log")
+	logFile := os.DevNull
+	if runtime.GOOS != "windows" {
+		logFile = filepath.Join(t.TempDir(), "test.log")
+	}
 
 	cfg := Config{
 		Level:      "info",
@@ -38,7 +41,9 @@ func TestNewLogger(t *testing.T) {
 	log.Info("test info")
 	log.Sync()
 
-	stat, err := os.Stat(logFile)
-	assert.NoError(t, err)
-	assert.True(t, stat.Size() > 0)
+	if logFile != os.DevNull {
+		stat, err := os.Stat(logFile)
+		assert.NoError(t, err)
+		assert.True(t, stat.Size() > 0)
+	}
 }

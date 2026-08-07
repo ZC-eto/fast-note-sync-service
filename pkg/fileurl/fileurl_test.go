@@ -1,6 +1,7 @@
 package fileurl
 
 import (
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -31,7 +32,12 @@ func TestUrlEscape(t *testing.T) {
 }
 
 func TestIsAbsPath(t *testing.T) {
-	// These only apply strictly dynamically across platform, but we can test typical UNIX style if we assume it runs on Linux/Mac
+	if runtime.GOOS == "windows" {
+		assert.True(t, IsAbsPath(`C:\abs\path`))
+		assert.False(t, IsAbsPath(`/abs/path`))
+		assert.False(t, IsAbsPath(`rel\path`))
+		return
+	}
 	assert.True(t, IsAbsPath("/abs/path"))
 	assert.False(t, IsAbsPath("rel/path"))
 }

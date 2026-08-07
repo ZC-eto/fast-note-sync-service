@@ -1,0 +1,142 @@
+feature: 2026-08-06-safe-revision-sync
+created: 2026-08-06
+
+steps:
+  - id: S1
+    action: "验证基线：统一插件测试入口并修复现有同步测试的不可归因失败"
+    exit_signal: "pnpm test 可以一次运行三个现有测试且结果可归因"
+    status: done
+  - id: S2
+    action: "领域与持久化：建立 PostgreSQL per-user Resource/Vault Revision、PathTombstone、UoW、staging/recovery、操作日志、SQLite 用户库导入和可重入迁移"
+    exit_signal: "SQLite fixture 到 PostgreSQL 的 dry-run/重复导入校验，以及临时数据库与文件系统故障注入证明回填、事务、PREPARED 恢复、原子递增和 30 天终态幂等窗口"
+    status: done
+  - id: S3
+    action: "协议编排：扩展 capability、status/bootstrap/events、创建与安全 mutation、附件 start/commit 和结构化错误"
+    exit_signal: "OFF 保持旧行为；BOOTSTRAPPING 冻结写入；STRICT 的创建、附件 commit、事件分页和错误均可由协议测试观察"
+    status: done
+  - id: S4
+    action: "服务端计算：通过 strict guard 与 coordinator 接管 STRICT/BOOTSTRAPPING 的所有逻辑写入口和递归资源操作"
+    exit_signal: "顺序、冲突、重复操作、非 WebSocket 绕过、递归文件夹和目标路径冲突测试全部通过且无部分提交"
+    status: done
+  - id: S5
+    action: "客户端状态：按 server/user/vault 双写设备/操作/修订基准，处理 bootstrap mismatch 与过期 pending，保护远端删除并建立恢复区"
+    exit_signal: "ACK、断线重试、状态文件损坏、未知基准、mismatch、过期 pending、删除冲突和恢复区失败测试均有确定结果"
+    status: done
+  - id: S6
+    action: "设置交互：加入默认关闭的安全多端同步 toggle、完整状态、strict 不降级确认和能力不可用反馈"
+    exit_signal: "桌面与移动端可观察 disabled/unsupported/activating/bootstrapping/active/strict-vault-local-disabled/error，关闭仅暂停且无布局溢出"
+    status: done
+  - id: S7
+    action: "兼容与加固：完成 PostgreSQL capability gate、新旧双端、写入口矩阵、PREPARED/服务重启、时钟偏差、分页中断和文档同步"
+    exit_signal: "所有核心命令和 AC-01 至 AC-21 通过，无新增未说明回归"
+    status: done
+  - id: S8
+    action: "自用发布：构建 fork 服务，备份 SQLite/config/storage，导入并切换 Dokploy 公用 PostgreSQL，更新 Obsidian 插件和执行复制 Vault smoke"
+    exit_signal: "服务健康、PostgreSQL 迁移校验通过、插件版本一致、AC-15/AC-16/AC-21 有证据且回滚点可用"
+    status: pending
+
+checks:
+  - id: C1
+    item: "Resource 当前状态唯一，旧路径使用 PathTombstone；Resource ID 稳定且 Resource Revision 与 Note.Version 分离"
+    source: 名词契约
+    status: pending
+  - id: C2
+    item: "per-user UoW 同事务提交 Vault Revision、资源/路径状态、事件和 COMMITTED 结果；物理内容用 staging/recovery"
+    source: 名词契约
+    status: pending
+  - id: C3
+    item: "STRICT/BOOTSTRAPPING 的所有逻辑写入口经过 StrictVaultWriteGuard；安全写入统一经过 SafeMutationCoordinator"
+    source: 编排骨架
+    status: pending
+  - id: C4
+    item: "客户端只在匹配 ACK 后推进基准，远端删除先验证并写恢复区"
+    source: 流程级约束
+    status: pending
+  - id: C5
+    item: "safeRevisionSyncEnabled 默认 false，服务端不支持时不能激活"
+    source: 挂载点
+    status: pending
+  - id: C6
+    item: "严格 Vault 不因单台设备关闭本地设置而降级"
+    source: 流程级约束
+    status: pending
+  - id: C7
+    item: "本阶段不包含权威镜像、设备角色、.obsidian 同步或上游 PR"
+    source: 范围守护
+    status: pending
+  - id: C8
+    item: "AC-01 至 AC-21 均有可观察证据"
+    source: 验收场景
+    status: pending
+  - id: C9
+    item: "Dokploy 使用 fork 构建，storage/config/staging 持久化、备份并有可验证回滚点"
+    source: 挂载点
+    status: pending
+  - id: C10
+    item: "本机 Obsidian 插件产物、manifest 版本和加载版本一致"
+    source: 验收场景
+    status: pending
+  - id: C11
+    item: "创建使用 absent/0 前置条件并由服务端分配 Resource ID；附件只有 commit 校验 hash 后产生 revision"
+    source: 协议契约
+    status: pending
+  - id: C12
+    item: "首次激活通过带过期 session 的 OFF -> BOOTSTRAPPING -> STRICT CAS，mismatch 或失败不提交"
+    source: 编排骨架
+    status: pending
+  - id: C13
+    item: "PREPARED 崩溃恢复完成提交或恢复 old-image，未 COMMITTED 不 ACK、不广播"
+    source: 流程级约束
+    status: pending
+  - id: C14
+    item: "客户端状态绑定 serverFingerprint + uid + vaultId 并双写；过期 pending 不重发"
+    source: 客户端持久化契约
+    status: pending
+  - id: C15
+    item: "旧 WebSocket、REST、MCP、Git sync 和回收站恢复不能绕过严格 Vault"
+    source: 严格写入守卫
+    status: pending
+  - id: C16
+    item: "安全修订 capability 仅在 PostgreSQL 用户库且 SQLite 导入校验完成后可用；导入可重入、保留主键并可回滚"
+    source: PostgreSQL 部署前提
+    status: pending
+
+dod:
+  commands:
+    - id: CMD-001
+      command: "go test ./internal/routers/websocket_router ./internal/service ./internal/dao ./internal/upgrade"
+      core: true
+      failure_handling: fix-or-block
+    - id: CMD-002
+      command: "go test ./..."
+      core: true
+      failure_handling: fix-or-block
+    - id: CMD-003
+      command: "go build ./..."
+      core: true
+      failure_handling: fix-or-block
+    - id: CMD-004
+      command: "pnpm test"
+      core: true
+      failure_handling: fix-or-block
+    - id: CMD-005
+      command: "pnpm lint"
+      core: true
+      failure_handling: fix-or-block
+    - id: CMD-006
+      command: "pnpm build"
+      core: true
+      failure_handling: fix-or-block
+    - id: CMD-007
+      command: "git diff --check"
+      core: false
+      failure_handling: fix-or-block
+  evidence_required:
+    - command_output
+    - diff_summary
+    - compatibility_matrix
+    - deployment_health
+    - plugin_load_observation
+  cleanliness:
+    debug_output: forbidden
+    temporary_artifacts: remove

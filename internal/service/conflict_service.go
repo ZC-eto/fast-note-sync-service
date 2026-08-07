@@ -34,17 +34,22 @@ type conflictService struct {
 	vaultService VaultService
 	logger       *zap.Logger
 	clientName   string
+	strictGuard  *StrictVaultWriteGuard
 }
 
 // NewConflictService creates a ConflictService instance
 // NewConflictService 创建 ConflictService 实例
-func NewConflictService(noteRepo domain.NoteRepository, vaultSvc VaultService, logger *zap.Logger) ConflictService {
-	return &conflictService{
+func NewConflictService(noteRepo domain.NoteRepository, vaultSvc VaultService, logger *zap.Logger, guards ...*StrictVaultWriteGuard) ConflictService {
+	service := &conflictService{
 		noteRepo:     noteRepo,
 		vaultService: vaultSvc,
 		logger:       logger,
 		clientName:   "conflict-service",
 	}
+	if len(guards) > 0 {
+		service.strictGuard = guards[0]
+	}
+	return service
 }
 
 // CreateConflictFile creates a conflict file
@@ -54,6 +59,9 @@ func (s *conflictService) CreateConflictFile(ctx context.Context, uid int64, par
 	// 获取 VaultID
 	vaultID, err := s.vaultService.MustGetID(ctx, uid, params.Vault)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.strictGuard.CheckLegacyWrite(ctx, uid, vaultID); err != nil {
 		return nil, err
 	}
 

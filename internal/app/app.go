@@ -93,6 +93,13 @@ func NewApp(cfg *AppConfig, logger *zap.Logger, db *gorm.DB, efs embed.FS) (*App
 	return a, nil
 }
 
+func (a *App) RecoverPreparedSafeSyncOperations(ctx context.Context) error {
+	if a == nil || a.config == nil || !strings.EqualFold(a.config.UserDatabase.Type, "postgres") {
+		return nil
+	}
+	return recoverPreparedSafeSyncOperations(ctx, a.UserRepo, a.SafeMutationCoordinator.RecoverPrepared)
+}
+
 // Close releases resources held by application container
 // Close 释放应用容器持有的资源
 func (a *App) Close() error {

@@ -130,4 +130,13 @@ var en_messages = map[int]string{
 	520: "Cloudflared download failed",
 	521: "Cloudflared binary not found, please download the tunnel program first",
 	530: "Sync conflict detected, a conflict copy has been created",
+	531: "Safe revision sync is not supported by this server configuration",
+	532: "Safe revision sync bootstrap is already in progress",
+	533: "This vault requires safe revision sync",
+	534: "The resource revision has changed",
+	535: "The resource path state has changed",
+	536: "The operation ID was already used with a different request",
+	537: "The operation is outside the idempotency retention window",
+	538: "The event cursor is no longer available; bootstrap is required",
+	539: "The bootstrap session state has changed",
 }

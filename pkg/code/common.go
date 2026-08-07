@@ -135,5 +135,14 @@ var (
 	ErrorCloudflaredBinaryNotFound = NewError(521)
 
 	// --- Sync Conflict Related (530-539) ---
-	ErrorSyncConflict = NewError(530)
+	ErrorSyncConflict              = NewError(530)
+	ErrorSafeSyncUnsupported       = NewError(531)
+	ErrorSafeSyncBootstrapProgress = NewError(532)
+	ErrorSafeSyncStrictRequired    = NewError(533)
+	ErrorSafeSyncRevisionConflict  = NewError(534)
+	ErrorSafeSyncPathConflict      = NewError(535)
+	ErrorSafeSyncOperationIDReused = NewError(536)
+	ErrorSafeSyncOperationExpired  = NewError(537)
+	ErrorSafeSyncRebootstrap       = NewError(538)
+	ErrorSafeSyncBootstrapConflict = NewError(539)
 )

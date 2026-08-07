@@ -165,12 +165,13 @@ type noteService struct {
 	backupService  BackupService              // Backup service // 备份服务
 	gitSyncService GitSyncService             // Git sync service // Git 同步服务
 	countTimers    *sync.Map                  // Timers for CountSizeSum debounce // CountSizeSum 防抖计时器
+	strictGuard    *StrictVaultWriteGuard
 }
 
 // NewNoteService creates NoteService instance
 // NewNoteService 创建 NoteService 实例
-func NewNoteService(userRepo domain.UserRepository, noteRepo domain.NoteRepository, noteLinkRepo domain.NoteLinkRepository, fileRepo domain.FileRepository, shareRepo domain.UserShareRepository, vaultSvc VaultService, folderSvc FolderService, backupSvc BackupService, gitSyncSvc GitSyncService, syncLogSvc SyncLogService, config *ServiceConfig) NoteService {
-	return &noteService{
+func NewNoteService(userRepo domain.UserRepository, noteRepo domain.NoteRepository, noteLinkRepo domain.NoteLinkRepository, fileRepo domain.FileRepository, shareRepo domain.UserShareRepository, vaultSvc VaultService, folderSvc FolderService, backupSvc BackupService, gitSyncSvc GitSyncService, syncLogSvc SyncLogService, config *ServiceConfig, guards ...*StrictVaultWriteGuard) NoteService {
+	service := &noteService{
 		userRepo:       userRepo,
 		noteRepo:       noteRepo,
 		noteLinkRepo:   noteLinkRepo,
@@ -186,6 +187,10 @@ func NewNoteService(userRepo domain.UserRepository, noteRepo domain.NoteReposito
 		config:         config,
 		countTimers:    &sync.Map{},
 	}
+	if len(guards) > 0 {
+		service.strictGuard = guards[0]
+	}
+	return service
 }
 
 // WithClient sets client info, returns new NoteService instance
@@ -208,6 +213,7 @@ func (s *noteService) WithClient(clientType, name, version string) NoteService {
 		backupService:  s.backupService,
 		gitSyncService: s.gitSyncService,
 		countTimers:    s.countTimers, // Share the same timer map // 共享同一个计时器 map
+		strictGuard:    s.strictGuard,
 	}
 }
 
@@ -358,6 +364,9 @@ func (s *noteService) ModifyOrCreate(ctx context.Context, uid int64, params *dto
 	// 使用 VaultService.MustGetID 获取 VaultID
 	vaultID, err := s.vaultService.MustGetID(ctx, uid, params.Vault)
 	if err != nil {
+		return false, nil, err
+	}
+	if err := s.strictGuard.CheckLegacyWrite(ctx, uid, vaultID); err != nil {
 		return false, nil, err
 	}
 
@@ -531,6 +540,9 @@ func (s *noteService) Delete(ctx context.Context, uid int64, params *dto.NoteDel
 	if err != nil {
 		return nil, err // VaultService 已返回 code.Error
 	}
+	if err := s.strictGuard.CheckLegacyWrite(ctx, uid, vaultID); err != nil {
+		return nil, err
+	}
 
 	note, err := s.noteRepo.GetByPathHashIncludeRecycle(ctx, params.PathHash, vaultID, uid, false)
 	if err != nil {
@@ -589,6 +601,9 @@ func (s *noteService) Restore(ctx context.Context, uid int64, params *dto.NoteRe
 	vaultID, err := s.vaultService.MustGetID(ctx, uid, params.Vault)
 	if err != nil {
 		return nil, err // VaultService 已返回 code.Error
+	}
+	if err := s.strictGuard.CheckLegacyWrite(ctx, uid, vaultID); err != nil {
+		return nil, err
 	}
 
 	// Get note from recycle bin // 从回收站获取笔记
@@ -650,6 +665,9 @@ func (s *noteService) Restore(ctx context.Context, uid int64, params *dto.NoteRe
 func (s *noteService) Rename(ctx context.Context, uid int64, params *dto.NoteRenameRequest) (*dto.NoteDTO, *dto.NoteDTO, error) {
 	vaultID, err := s.vaultService.MustGetID(ctx, uid, params.Vault)
 	if err != nil {
+		return nil, nil, err
+	}
+	if err := s.strictGuard.CheckLegacyWrite(ctx, uid, vaultID); err != nil {
 		return nil, nil, err
 	}
 
@@ -1324,6 +1342,9 @@ func (s *noteService) RecycleClear(ctx context.Context, uid int64, params *dto.N
 	if err != nil {
 		return err
 	}
+	if err := s.strictGuard.CheckLegacyWrite(ctx, uid, vaultID); err != nil {
+		return err
+	}
 
 	if params.Path != "" && params.PathHash == "" {
 		params.PathHash = util.EncodeHash32(params.Path)
@@ -1364,6 +1385,9 @@ func (s *noteService) RecycleClear(ctx context.Context, uid int64, params *dto.N
 
 // CleanDuplicateNotes 清理重复的笔记记录
 func (s *noteService) CleanDuplicateNotes(ctx context.Context, uid int64, vaultID int64) error {
+	if err := s.strictGuard.CheckLegacyWrite(ctx, uid, vaultID); err != nil {
+		return err
+	}
 	// 获取所有笔记（包含已删除，以便全局去重）
 	notes, err := s.noteRepo.ListByUpdatedTimestamp(ctx, 0, vaultID, uid)
 	if err != nil {

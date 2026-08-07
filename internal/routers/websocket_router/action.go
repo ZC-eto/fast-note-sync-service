@@ -105,6 +105,20 @@ const (
 	// SettingReceiveRePush setting missing pull request
 	// SettingReceiveRePush 配置缺失请求拉取
 	SettingReceiveRePush WebSocketReceiveAction = "SettingRePush"
+
+	// ---------------- Safe Revision Sync ----------------
+
+	SafeSyncReceiveStatus           WebSocketReceiveAction = "SafeSyncStatus"
+	SafeSyncReceiveBootstrapStart   WebSocketReceiveAction = "SafeSyncBootstrapStart"
+	SafeSyncReceiveBootstrapPage    WebSocketReceiveAction = "SafeSyncBootstrapPage"
+	SafeSyncReceiveBootstrapCommit  WebSocketReceiveAction = "SafeSyncBootstrapCommit"
+	SafeSyncReceiveBootstrapCancel  WebSocketReceiveAction = "SafeSyncBootstrapCancel"
+	SafeSyncReceiveEvents           WebSocketReceiveAction = "SafeSyncEvents"
+	SafeSyncReceiveNoteMutation     WebSocketReceiveAction = "SafeNoteMutation"
+	SafeSyncReceiveFolderMutation   WebSocketReceiveAction = "SafeFolderMutation"
+	SafeSyncReceiveFileMutation     WebSocketReceiveAction = "SafeFileMutation"
+	SafeSyncReceiveFileUploadStart  WebSocketReceiveAction = "SafeFileUploadStart"
+	SafeSyncReceiveFileUploadCommit WebSocketReceiveAction = "SafeFileUploadCommit"
 )
 
 const (
@@ -267,6 +281,19 @@ const (
 	// FolderSyncPageAck folder sync page ack request
 	// FolderSyncPageAck 文件夹同步分页确认接收
 	FolderSyncPageAck WebSocketReceiveAction = "FolderSyncPageAck"
+
+	// ---------------- Safe Revision Sync ----------------
+
+	SafeSyncStatusAck           WebSocketSendAction = "SafeSyncStatus"
+	SafeSyncBootstrapStartAck   WebSocketSendAction = "SafeSyncBootstrapStartAck"
+	SafeSyncBootstrapPageAck    WebSocketSendAction = "SafeSyncBootstrapPageAck"
+	SafeSyncBootstrapCommitAck  WebSocketSendAction = "SafeSyncBootstrapCommitAck"
+	SafeSyncBootstrapCancelAck  WebSocketSendAction = "SafeSyncBootstrapCancelAck"
+	SafeSyncEventsAck           WebSocketSendAction = "SafeSyncEventsAck"
+	SafeSyncNoteMutationAck     WebSocketSendAction = "SafeNoteMutationAck"
+	SafeSyncFolderMutationAck   WebSocketSendAction = "SafeFolderMutationAck"
+	SafeSyncFileMutationAck     WebSocketSendAction = "SafeFileMutationAck"
+	SafeSyncFileUploadStartAck  WebSocketSendAction = "SafeFileUploadStartAck"
+	SafeSyncFileUploadCommitAck WebSocketSendAction = "SafeFileUploadCommitAck"
+	SafeSyncEvent               WebSocketSendAction = "SafeSyncEvent"
 )
-
-

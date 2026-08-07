@@ -5,6 +5,7 @@ package app
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/haierkeys/fast-note-sync-service/pkg/util"
@@ -78,6 +79,9 @@ func LoadConfig(f string) (*AppConfig, string, error) {
 	if err := defaults.Set(c); err != nil {
 		return nil, realpath, errors.Wrap(err, "re-set default config failed")
 	}
+	if err := applyUserDatabaseEnvironmentOverrides(&c.UserDatabase); err != nil {
+		return nil, realpath, err
+	}
 	c.OAuth.Normalize()
 	if err := c.OAuth.Validate(); err != nil {
 		return nil, realpath, errors.Wrap(err, "validate oauth config failed")
@@ -88,6 +92,33 @@ func LoadConfig(f string) (*AppConfig, string, error) {
 	}
 
 	return c, realpath, nil
+}
+
+func applyUserDatabaseEnvironmentOverrides(cfg *config.DatabaseConfig) error {
+	if cfg == nil {
+		return nil
+	}
+	for envName, target := range map[string]*string{
+		"FNS_USER_DATABASE_TYPE":     &cfg.Type,
+		"FNS_USER_DATABASE_HOST":     &cfg.Host,
+		"FNS_USER_DATABASE_USERNAME": &cfg.UserName,
+		"FNS_USER_DATABASE_PASSWORD": &cfg.Password,
+		"FNS_USER_DATABASE_NAME":     &cfg.Name,
+		"FNS_USER_DATABASE_SSL_MODE": &cfg.SSLMode,
+		"FNS_USER_DATABASE_SCHEMA":   &cfg.Schema,
+	} {
+		if value, ok := os.LookupEnv(envName); ok {
+			*target = value
+		}
+	}
+	if value, ok := os.LookupEnv("FNS_USER_DATABASE_PORT"); ok {
+		port, err := strconv.Atoi(value)
+		if err != nil || port < 1 || port > 65535 {
+			return errors.Errorf("invalid FNS_USER_DATABASE_PORT %q", value)
+		}
+		cfg.Port = port
+	}
+	return nil
 }
 
 // Save saves configuration to file

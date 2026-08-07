@@ -51,10 +51,11 @@ type folderService struct {
 	clientType     string
 	clientName     string
 	clientVersion  string
+	strictGuard    *StrictVaultWriteGuard
 }
 
-func NewFolderService(folderRepo domain.FolderRepository, noteRepo domain.NoteRepository, fileRepo domain.FileRepository, vaultSvc VaultService, backupSvc BackupService, gitSyncSvc GitSyncService, syncLogSvc SyncLogService, pool *workerpool.Pool) FolderService {
-	return &folderService{
+func NewFolderService(folderRepo domain.FolderRepository, noteRepo domain.NoteRepository, fileRepo domain.FileRepository, vaultSvc VaultService, backupSvc BackupService, gitSyncSvc GitSyncService, syncLogSvc SyncLogService, pool *workerpool.Pool, guards ...*StrictVaultWriteGuard) FolderService {
+	service := &folderService{
 		folderRepo:     folderRepo,
 		noteRepo:       noteRepo,
 		fileRepo:       fileRepo,
@@ -65,6 +66,10 @@ func NewFolderService(folderRepo domain.FolderRepository, noteRepo domain.NoteRe
 		pool:           pool,
 		sf:             &singleflight.Group{},
 	}
+	if len(guards) > 0 {
+		service.strictGuard = guards[0]
+	}
+	return service
 }
 
 func (s *folderService) domainToDTO(f *domain.Folder) *dto.FolderDTO {
@@ -132,6 +137,9 @@ func (s *folderService) UpdateOrCreate(ctx context.Context, uid int64, params *d
 	if err != nil {
 		return nil, err
 	}
+	if err := s.strictGuard.CheckLegacyWrite(ctx, uid, vaultID); err != nil {
+		return nil, err
+	}
 
 	if params.Path != strings.Trim(params.Path, "/") && params.Path != "" {
 		return nil, code.ErrorInvalidParams.WithDetails("path cannot be empty")
@@ -168,6 +176,9 @@ func (s *folderService) Delete(ctx context.Context, uid int64, params *dto.Folde
 	// Use VaultService.MustGetID to retrieve VaultID // 使用 VaultService.MustGetID 获取 VaultID
 	vaultID, err := s.vaultService.MustGetID(ctx, uid, params.Vault)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.strictGuard.CheckLegacyWrite(ctx, uid, vaultID); err != nil {
 		return nil, err
 	}
 
@@ -210,6 +221,9 @@ func (s *folderService) Delete(ctx context.Context, uid int64, params *dto.Folde
 func (s *folderService) DeleteTree(ctx context.Context, uid int64, params *dto.FolderDeleteRequest) (*dto.FolderDTO, error) {
 	vaultID, err := s.vaultService.MustGetID(ctx, uid, params.Vault)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.strictGuard.CheckLegacyWrite(ctx, uid, vaultID); err != nil {
 		return nil, err
 	}
 
@@ -327,6 +341,9 @@ func (s *folderService) ListByUpdatedTimestamp(ctx context.Context, uid int64, v
 func (s *folderService) Rename(ctx context.Context, uid int64, params *dto.FolderRenameRequest) (*dto.FolderDTO, *dto.FolderDTO, error) {
 	vaultID, err := s.vaultService.MustGetID(ctx, uid, params.Vault)
 	if err != nil {
+		return nil, nil, err
+	}
+	if err := s.strictGuard.CheckLegacyWrite(ctx, uid, vaultID); err != nil {
 		return nil, nil, err
 	}
 
@@ -557,6 +574,7 @@ func (s *folderService) ListFiles(ctx context.Context, uid int64, params *dto.Fo
 // A proper fix would be to either:
 //   - Use singleflight keyed by (vaultID, path) to coalesce concurrent creates
 //   - Add a UNIQUE constraint on (vault_id, path_hash) and handle conflict
+//
 // ensurePathFIDSingle performs the underlying lookup or creation of a folder.
 // ensurePathFIDSingle 执行底层的文件夹查询或创建。
 func (s *folderService) ensurePathFIDSingle(ctx context.Context, uid int64, vaultID int64, pathHash string, currentPath string, currentFID int64, level int) (any, error) {
@@ -602,6 +620,9 @@ func (s *folderService) ensurePathFIDSingle(ctx context.Context, uid int64, vaul
 }
 
 func (s *folderService) EnsurePathFID(ctx context.Context, uid int64, vaultID int64, path string) (int64, error) {
+	if err := s.strictGuard.CheckLegacyWrite(ctx, uid, vaultID); err != nil {
+		return 0, err
+	}
 	path = strings.Trim(path, "/")
 	if path == "" {
 		return 0, nil
@@ -638,6 +659,9 @@ func (s *folderService) EnsurePathFID(ctx context.Context, uid int64, vaultID in
 }
 
 func (s *folderService) CleanupEmptyAncestors(ctx context.Context, uid int64, vaultID int64, resourcePath string) error {
+	if err := s.strictGuard.CheckLegacyWrite(ctx, uid, vaultID); err != nil {
+		return err
+	}
 	path := strings.Trim(resourcePath, "/")
 	if path == "" || !strings.Contains(path, "/") {
 		return nil
@@ -948,6 +972,9 @@ func (s *folderService) GetTree(ctx context.Context, uid int64, params *dto.Fold
 }
 
 func (s *folderService) CleanDuplicateFolders(ctx context.Context, uid int64, vaultID int64) error {
+	if err := s.strictGuard.CheckLegacyWrite(ctx, uid, vaultID); err != nil {
+		return err
+	}
 	// 1. Get all folder records (including deleted ones for logical cleanup)
 	// 1. 获取所有文件夹记录（包含已删除的，以便按逻辑清理）
 	folders, err := s.folderRepo.ListByUpdatedTimestamp(ctx, 0, vaultID, uid)

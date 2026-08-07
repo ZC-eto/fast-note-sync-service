@@ -22,6 +22,7 @@ func initWebSocketRoutes(wss *pkgapp.WebsocketServer, appContainer *app.App) {
 	folderWSHandler := websocket_router.NewFolderWSHandler(appContainer)
 	fileWSHandler := websocket_router.NewFileWSHandler(appContainer)
 	settingWSHandler := websocket_router.NewSettingWSHandler(appContainer)
+	safeSyncWSHandler := websocket_router.NewSafeSyncWSHandler(appContainer)
 
 	// Note
 	wss.Use(websocket_router.NoteReceiveModify, noteWSHandler.NoteModify)
@@ -59,6 +60,19 @@ func initWebSocketRoutes(wss *pkgapp.WebsocketServer, appContainer *app.App) {
 
 	// Attachment chunk upload
 	wss.UseBinary(websocket_router.VaultFileMsgType, fileWSHandler.FileUploadChunkBinary)
+
+	// Safe revision sync
+	wss.Use(websocket_router.SafeSyncReceiveStatus, safeSyncWSHandler.Status)
+	wss.Use(websocket_router.SafeSyncReceiveBootstrapStart, safeSyncWSHandler.BootstrapStart)
+	wss.Use(websocket_router.SafeSyncReceiveBootstrapPage, safeSyncWSHandler.BootstrapPage)
+	wss.Use(websocket_router.SafeSyncReceiveBootstrapCommit, safeSyncWSHandler.BootstrapCommit)
+	wss.Use(websocket_router.SafeSyncReceiveBootstrapCancel, safeSyncWSHandler.BootstrapCancel)
+	wss.Use(websocket_router.SafeSyncReceiveEvents, safeSyncWSHandler.Events)
+	wss.Use(websocket_router.SafeSyncReceiveNoteMutation, safeSyncWSHandler.NoteMutation)
+	wss.Use(websocket_router.SafeSyncReceiveFolderMutation, safeSyncWSHandler.FolderMutation)
+	wss.Use(websocket_router.SafeSyncReceiveFileMutation, safeSyncWSHandler.FileMutation)
+	wss.Use(websocket_router.SafeSyncReceiveFileUploadStart, safeSyncWSHandler.FileUploadStart)
+	wss.Use(websocket_router.SafeSyncReceiveFileUploadCommit, safeSyncWSHandler.FileUploadCommit)
 
 	// Inject Message Interceptor to handle unauthenticated checks, Vault restrictions, RBAC checks, and error rollbacks
 	// 注入消息拦截器，处理未登录验证、Vault笔记库限制校验、RBAC权限检查以及写失败回滚机制

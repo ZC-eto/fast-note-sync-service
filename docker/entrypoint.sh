@@ -9,6 +9,12 @@ fi
 # 切换目录
 cd "/${P_NAME}/" || { echo "Failed to cd to /${P_NAME}/"; exit 1; }
 
+# Compose command arguments run an explicit maintenance subcommand, such as
+# safe-sync-import. With no arguments, preserve the existing server log flow.
+if [ "$#" -gt 0 ]; then
+    exec "/${P_NAME}/${P_BIN}" "$@"
+fi
+
 # 创建日志目录和文件
 mkdir -p storage/logs || { echo "Failed to create logs dir"; exit 1; }
 touch storage/logs/c.log || { echo "Failed to create c.log"; exit 1; }

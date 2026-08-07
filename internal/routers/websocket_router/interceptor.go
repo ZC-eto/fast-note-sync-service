@@ -78,18 +78,38 @@ func checkRBAC(c *pkgapp.WebsocketClient, msg *pkgapp.WebSocketMessage, logger i
 	Warn(string, ...zapcore.Field)
 	Info(string, ...zapcore.Field)
 }) bool {
-	function := resolveRBACFunction(msg.Type)
-	if function == "" {
+	functions := resolveRBACFunctions(msg.Type)
+	if len(functions) == 0 {
 		return true // 无需权限检查的消息类型，直接放行 / message type requires no RBAC check
 	}
-	if pkgapp.VerifyPermissions(c.Scope, "ws", c.ClientType(), function) {
-		return true
+	for _, function := range functions {
+		if pkgapp.VerifyPermissions(c.Scope, "ws", c.ClientType(), function) {
+			continue
+		}
+		logger.Warn("WS OnMessage Permission Denied",
+			zap.String("Type", msg.Type),
+			zap.String("uid", c.User.ID),
+			zap.String("function", function))
+		return handlePermissionDenied(c, msg, function, logger)
 	}
-	logger.Warn("WS OnMessage Permission Denied",
-		zap.String("Type", msg.Type),
-		zap.String("uid", c.User.ID),
-		zap.String("function", function))
-	return handlePermissionDenied(c, msg, function, logger)
+	return true
+}
+
+func resolveRBACFunctions(msgType string) []string {
+	switch msgType {
+	case SafeSyncReceiveStatus, SafeSyncReceiveBootstrapPage, SafeSyncReceiveEvents:
+		return []string{"note_r", "file_r"}
+	case SafeSyncReceiveBootstrapStart, SafeSyncReceiveBootstrapCommit, SafeSyncReceiveBootstrapCancel:
+		return []string{"note_w", "file_w"}
+	case SafeSyncReceiveNoteMutation, SafeSyncReceiveFolderMutation:
+		return []string{"note_w"}
+	case SafeSyncReceiveFileUploadStart, SafeSyncReceiveFileUploadCommit:
+		return []string{"file_w"}
+	}
+	if function := resolveRBACFunction(msgType); function != "" {
+		return []string{function}
+	}
+	return nil
 }
 
 // resolveRBACFunction 将 WebSocket 消息类型映射到 RBAC 功能点字符串。
@@ -121,9 +141,13 @@ func handlePermissionDenied(c *pkgapp.WebsocketClient, msg *pkgapp.WebSocketMess
 	Info(string, ...zapcore.Field)
 }) bool {
 	resPath := resolveResourcePath(msg)
-	c.ToResponse(code.ErrorAuthTokenScopeRestricted.WithDetails("Permission denied: "+resPath), msg.Type+"Ack")
+	responseAction := msg.Type + "Ack"
+	if safeAction := safeSyncResponseAction(msg.Type); safeAction != "" {
+		responseAction = safeAction
+	}
+	c.ToResponse(code.ErrorAuthTokenScopeRestricted.WithDetails("Permission denied: "+resPath), responseAction)
 
-	if !strings.HasSuffix(function, "_w") {
+	if !strings.HasSuffix(function, "_w") || strings.HasPrefix(msg.Type, "Safe") {
 		return false
 	}
 

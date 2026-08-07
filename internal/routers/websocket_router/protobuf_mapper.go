@@ -509,6 +509,111 @@ func DeReceiveProtobufToDTO(action WebSocketReceiveAction, data []byte, obj any)
 			dest.PageIndex = int(pbMsg.PageIndex)
 			return true, nil
 		}
+	case SafeSyncReceiveStatus:
+		var pbMsg v1.SafeSyncStatusRequest
+		if err := proto.Unmarshal(data, &pbMsg); err != nil {
+			return false, err
+		}
+		if dest, ok := obj.(*dto.SafeSyncStatusRequest); ok {
+			dest.Vault = pbMsg.Vault
+			return true, nil
+		}
+	case SafeSyncReceiveBootstrapStart:
+		var pbMsg v1.SafeSyncBootstrapStartRequest
+		if err := proto.Unmarshal(data, &pbMsg); err != nil {
+			return false, err
+		}
+		if dest, ok := obj.(*dto.SafeSyncBootstrapStartRequest); ok {
+			dest.Vault = pbMsg.Vault
+			dest.DeviceID = pbMsg.DeviceId
+			dest.Context = pbMsg.Context
+			return true, nil
+		}
+	case SafeSyncReceiveBootstrapPage:
+		var pbMsg v1.SafeSyncBootstrapPageRequest
+		if err := proto.Unmarshal(data, &pbMsg); err != nil {
+			return false, err
+		}
+		if dest, ok := obj.(*dto.SafeSyncBootstrapPageRequest); ok {
+			dest.Vault = pbMsg.Vault
+			dest.SessionID = pbMsg.SessionId
+			dest.Cursor = pbMsg.Cursor
+			dest.PageSize = pbMsg.PageSize
+			dest.Context = pbMsg.Context
+			return true, nil
+		}
+	case SafeSyncReceiveBootstrapCommit:
+		var pbMsg v1.SafeSyncBootstrapCommitRequest
+		if err := proto.Unmarshal(data, &pbMsg); err != nil {
+			return false, err
+		}
+		if dest, ok := obj.(*dto.SafeSyncBootstrapCommitRequest); ok {
+			dest.Vault = pbMsg.Vault
+			dest.SessionID = pbMsg.SessionId
+			dest.ManifestHash = pbMsg.ManifestHash
+			dest.SnapshotVaultRevision = pbMsg.SnapshotVaultRevision
+			dest.Context = pbMsg.Context
+			return true, nil
+		}
+	case SafeSyncReceiveBootstrapCancel:
+		var pbMsg v1.SafeSyncBootstrapCancelRequest
+		if err := proto.Unmarshal(data, &pbMsg); err != nil {
+			return false, err
+		}
+		if dest, ok := obj.(*dto.SafeSyncBootstrapCancelRequest); ok {
+			dest.Vault = pbMsg.Vault
+			dest.SessionID = pbMsg.SessionId
+			dest.Context = pbMsg.Context
+			return true, nil
+		}
+	case SafeSyncReceiveEvents:
+		var pbMsg v1.SafeSyncEventsRequest
+		if err := proto.Unmarshal(data, &pbMsg); err != nil {
+			return false, err
+		}
+		if dest, ok := obj.(*dto.SafeSyncEventsRequest); ok {
+			dest.Vault = pbMsg.Vault
+			dest.AfterRevision = pbMsg.AfterRevision
+			dest.PageSize = pbMsg.PageSize
+			dest.Context = pbMsg.Context
+			return true, nil
+		}
+	case SafeSyncReceiveNoteMutation, SafeSyncReceiveFolderMutation, SafeSyncReceiveFileMutation:
+		var pbMsg v1.SafeMutationRequest
+		if err := proto.Unmarshal(data, &pbMsg); err != nil {
+			return false, err
+		}
+		if dest, ok := obj.(*dto.SafeMutationRequest); ok {
+			*dest = safeMutationDTOFromProto(&pbMsg)
+			return true, nil
+		}
+	case SafeSyncReceiveFileUploadStart:
+		var pbMsg v1.SafeFileUploadStartRequest
+		if err := proto.Unmarshal(data, &pbMsg); err != nil {
+			return false, err
+		}
+		if dest, ok := obj.(*dto.SafeFileUploadStartRequest); ok {
+			if pbMsg.Mutation != nil {
+				dest.SafeMutationRequest = safeMutationDTOFromProto(pbMsg.Mutation)
+			}
+			dest.ChunkSize = pbMsg.ChunkSize
+			return true, nil
+		}
+	case SafeSyncReceiveFileUploadCommit:
+		var pbMsg v1.SafeFileUploadCommitRequest
+		if err := proto.Unmarshal(data, &pbMsg); err != nil {
+			return false, err
+		}
+		if dest, ok := obj.(*dto.SafeFileUploadCommitRequest); ok {
+			dest.Vault = pbMsg.Vault
+			dest.Context = pbMsg.Context
+			dest.DeviceID = pbMsg.DeviceId
+			dest.OperationID = pbMsg.OperationId
+			dest.SessionID = pbMsg.SessionId
+			dest.ContentHash = pbMsg.ContentHash
+			dest.Size = pbMsg.Size
+			return true, nil
+		}
 	}
 	return false, fmt.Errorf("unknown action: %s", action)
 }
@@ -569,7 +674,76 @@ func EnSendDTOToProtobuf(action WebSocketSendAction, res *pkgapp.Res) ([]byte, e
 // enSendDataPayload serializes data payload by action type
 // enSendDataPayload 根据动作类型序列化要发送的数据荷载
 func enSendDataPayload(action WebSocketSendAction, data any) ([]byte, error) {
+	switch src := data.(type) {
+	case dto.SafeSyncErrorData:
+		return proto.Marshal(safeSyncErrorDataToProto(src))
+	case *dto.SafeSyncErrorData:
+		if src != nil {
+			return proto.Marshal(safeSyncErrorDataToProto(*src))
+		}
+	}
+
 	switch action {
+	case SafeSyncStatusAck, SafeSyncBootstrapCommitAck, SafeSyncBootstrapCancelAck:
+		if src, ok := safeSyncStatusResponseValue(data); ok {
+			return proto.Marshal(&v1.SafeSyncStatusResponse{
+				Capability: src.Capability, State: src.State, LatestVaultRevision: src.LatestVaultRevision,
+				MigrationVerified: src.MigrationVerified, BootstrapSessionId: src.BootstrapSessionID,
+				BootstrapExpiresAt: src.BootstrapExpiresAt, Uid: src.UID, VaultId: src.VaultID,
+			})
+		}
+	case SafeSyncBootstrapStartAck:
+		if src, ok := safeSyncBootstrapStartResponseValue(data); ok {
+			return proto.Marshal(&v1.SafeSyncBootstrapStartResponse{
+				State: src.State, SessionId: src.SessionID, ExpiresAt: src.ExpiresAt,
+				SnapshotVaultRevision: src.SnapshotVaultRevision, ManifestHash: src.ManifestHash,
+				ResourceCount: src.ResourceCount, Cursor: src.Cursor,
+			})
+		}
+	case SafeSyncBootstrapPageAck:
+		if src, ok := safeSyncBootstrapPageResponseValue(data); ok {
+			items := make([]*v1.SafeSyncManifestItem, len(src.Items))
+			for i, item := range src.Items {
+				items[i] = &v1.SafeSyncManifestItem{
+					ResourceId: item.ResourceID, ResourceType: item.ResourceType, Path: item.Path,
+					PathHash: item.PathHash, State: item.State, ResourceRevision: item.ResourceRevision,
+					ContentHash: item.ContentHash, Size: item.Size,
+				}
+			}
+			return proto.Marshal(&v1.SafeSyncBootstrapPageResponse{
+				SessionId: src.SessionID, SnapshotVaultRevision: src.SnapshotVaultRevision,
+				ManifestHash: src.ManifestHash, Items: items, NextCursor: src.NextCursor,
+			})
+		}
+	case SafeSyncEventsAck:
+		if src, ok := safeSyncEventsResponseValue(data); ok {
+			events := make([]*v1.SafeSyncEvent, len(src.Events))
+			for i, event := range src.Events {
+				events[i] = safeSyncEventToProto(event)
+			}
+			return proto.Marshal(&v1.SafeSyncEventsResponse{
+				Events: events, LatestVaultRevision: src.LatestVaultRevision,
+				NextRevision: src.NextRevision, HasMore: src.HasMore,
+			})
+		}
+	case SafeSyncNoteMutationAck, SafeSyncFolderMutationAck, SafeSyncFileMutationAck, SafeSyncFileUploadCommitAck:
+		if src, ok := safeMutationResponseValue(data); ok {
+			return proto.Marshal(&v1.SafeMutationResponse{
+				ResourceId: src.ResourceID, ResourceRevision: src.ResourceRevision,
+				VaultRevision: src.VaultRevision, ContentHash: src.ContentHash, Outcome: src.Outcome,
+			})
+		}
+	case SafeSyncFileUploadStartAck:
+		if src, ok := safeFileUploadStartResponseValue(data); ok {
+			return proto.Marshal(&v1.SafeFileUploadStartResponse{
+				SessionId: src.SessionID, NextChunkIndex: src.NextChunkIndex,
+				OperationId: src.OperationID, ExpiresAt: src.ExpiresAt,
+			})
+		}
+	case SafeSyncEvent:
+		if src, ok := safeSyncEventValue(data); ok {
+			return proto.Marshal(safeSyncEventToProto(src))
+		}
 	case NoteSyncPage:
 		if src, ok := data.(dto.SyncPageMessage); ok {
 			pbMsg := &v1.NoteSyncPageMessage{
@@ -1170,6 +1344,105 @@ func enSendDataPayload(action WebSocketSendAction, data any) ([]byte, error) {
 
 	// For unhandled message types, fallback to JSON encoding
 	return json.Marshal(data)
+}
+
+func safeMutationDTOFromProto(src *v1.SafeMutationRequest) dto.SafeMutationRequest {
+	if src == nil {
+		return dto.SafeMutationRequest{}
+	}
+	return dto.SafeMutationRequest{
+		Vault: src.Vault, Context: src.Context, DeviceID: src.DeviceId, OperationID: src.OperationId,
+		ResourceID: src.ResourceId, BaseRevision: src.BaseRevision, BaseHash: src.BaseHash,
+		ExpectedPathState: src.ExpectedPathState, Action: src.Action, Path: src.Path, PathHash: src.PathHash,
+		PreviousPath: src.PreviousPath, PreviousPathHash: src.PreviousPathHash, Content: src.Content,
+		ContentHash: src.ContentHash, Size: src.Size, Ctime: src.Ctime, Mtime: src.Mtime,
+	}
+}
+
+func safeSyncErrorDataToProto(src dto.SafeSyncErrorData) *v1.SafeSyncErrorData {
+	return &v1.SafeSyncErrorData{
+		ErrorCode: src.ErrorCode, ResourceId: src.ResourceID, ExpectedRevision: src.ExpectedRevision,
+		ActualRevision: src.ActualRevision, CurrentHash: src.CurrentHash, CurrentPath: src.CurrentPath,
+		CurrentPathState: src.CurrentPathState, OperationId: src.OperationID, Retryable: src.Retryable,
+	}
+}
+
+func safeSyncEventToProto(src dto.SafeSyncEvent) *v1.SafeSyncEvent {
+	return &v1.SafeSyncEvent{
+		VaultRevision: src.VaultRevision, ResourceId: src.ResourceID, ResourceRevision: src.ResourceRevision,
+		ResourceType: src.ResourceType, Action: src.Action, Path: src.Path, PreviousPath: src.PreviousPath,
+		ContentHash: src.ContentHash, State: src.State, TransactionId: src.TransactionID, OperationId: src.OperationID,
+	}
+}
+
+func safeSyncStatusResponseValue(data any) (dto.SafeSyncStatusResponse, bool) {
+	if value, ok := data.(dto.SafeSyncStatusResponse); ok {
+		return value, true
+	}
+	if value, ok := data.(*dto.SafeSyncStatusResponse); ok && value != nil {
+		return *value, true
+	}
+	return dto.SafeSyncStatusResponse{}, false
+}
+
+func safeSyncBootstrapStartResponseValue(data any) (dto.SafeSyncBootstrapStartResponse, bool) {
+	if value, ok := data.(dto.SafeSyncBootstrapStartResponse); ok {
+		return value, true
+	}
+	if value, ok := data.(*dto.SafeSyncBootstrapStartResponse); ok && value != nil {
+		return *value, true
+	}
+	return dto.SafeSyncBootstrapStartResponse{}, false
+}
+
+func safeSyncBootstrapPageResponseValue(data any) (dto.SafeSyncBootstrapPageResponse, bool) {
+	if value, ok := data.(dto.SafeSyncBootstrapPageResponse); ok {
+		return value, true
+	}
+	if value, ok := data.(*dto.SafeSyncBootstrapPageResponse); ok && value != nil {
+		return *value, true
+	}
+	return dto.SafeSyncBootstrapPageResponse{}, false
+}
+
+func safeSyncEventsResponseValue(data any) (dto.SafeSyncEventsResponse, bool) {
+	if value, ok := data.(dto.SafeSyncEventsResponse); ok {
+		return value, true
+	}
+	if value, ok := data.(*dto.SafeSyncEventsResponse); ok && value != nil {
+		return *value, true
+	}
+	return dto.SafeSyncEventsResponse{}, false
+}
+
+func safeMutationResponseValue(data any) (dto.SafeMutationResponse, bool) {
+	if value, ok := data.(dto.SafeMutationResponse); ok {
+		return value, true
+	}
+	if value, ok := data.(*dto.SafeMutationResponse); ok && value != nil {
+		return *value, true
+	}
+	return dto.SafeMutationResponse{}, false
+}
+
+func safeFileUploadStartResponseValue(data any) (dto.SafeFileUploadStartResponse, bool) {
+	if value, ok := data.(dto.SafeFileUploadStartResponse); ok {
+		return value, true
+	}
+	if value, ok := data.(*dto.SafeFileUploadStartResponse); ok && value != nil {
+		return *value, true
+	}
+	return dto.SafeFileUploadStartResponse{}, false
+}
+
+func safeSyncEventValue(data any) (dto.SafeSyncEvent, bool) {
+	if value, ok := data.(dto.SafeSyncEvent); ok {
+		return value, true
+	}
+	if value, ok := data.(*dto.SafeSyncEvent); ok && value != nil {
+		return *value, true
+	}
+	return dto.SafeSyncEvent{}, false
 }
 
 func formatString(v any) string {

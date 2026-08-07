@@ -90,6 +90,7 @@ type vaultService struct {
 	backupRepo  domain.BackupRepository
 	logger      *zap.Logger
 	sf          *singleflight.Group
+	strictGuard *StrictVaultWriteGuard
 }
 
 // NewVaultService creates VaultService instance
@@ -108,8 +109,9 @@ func NewVaultService(
 	gitRepo domain.GitSyncRepository,
 	backupRepo domain.BackupRepository,
 	logger *zap.Logger,
+	guards ...*StrictVaultWriteGuard,
 ) VaultService {
-	return &vaultService{
+	service := &vaultService{
 		repo:        repo,
 		noteRepo:    noteRepo,
 		fileRepo:    fileRepo,
@@ -125,6 +127,10 @@ func NewVaultService(
 		logger:      logger,
 		sf:          &singleflight.Group{},
 	}
+	if len(guards) > 0 {
+		service.strictGuard = guards[0]
+	}
+	return service
 }
 
 // GetByName retrieves Vault by name
@@ -297,6 +303,9 @@ func (s *vaultService) List(ctx context.Context, uid int64) ([]*dto.VaultDTO, er
 // Delete deletes Vault and all its associated resources
 // Delete 删除 Vault 及其所有关联资源
 func (s *vaultService) Delete(ctx context.Context, uid int64, id int64) error {
+	if err := s.strictGuard.CheckLegacyWrite(ctx, uid, id); err != nil {
+		return err
+	}
 	// 1. 清理笔记及物理内容
 	if err := s.noteRepo.DeleteByVaultID(ctx, id, uid); err != nil {
 		s.logger.Warn("failed to cleanup notes when deleting vault", zap.Int64("vaultID", id), zap.Error(err))
@@ -363,6 +372,9 @@ func (s *vaultService) Delete(ctx context.Context, uid int64, id int64) error {
 // Update updates Vault
 // Update 更新 Vault
 func (s *vaultService) Update(ctx context.Context, uid int64, id int64, name string) (*dto.VaultDTO, error) {
+	if err := s.strictGuard.CheckLegacyWrite(ctx, uid, id); err != nil {
+		return nil, err
+	}
 	// Get existing Vault
 	// 获取现有 Vault
 	vault, err := s.repo.GetByID(ctx, id, uid)
@@ -404,6 +416,9 @@ func (s *vaultService) RebuildIndex(ctx context.Context, uid, vaultID int64) err
 // ForceDeleteDataItem permanently deletes a single note or file and writes a sync log
 // ForceDeleteDataItem 强制物理删除单个笔记或附件数据并记录同步更新日志
 func (s *vaultService) ForceDeleteDataItem(ctx context.Context, uid int64, vaultID int64, itemType string, itemID int64, clientType, clientName, clientVersion string) error {
+	if err := s.strictGuard.CheckLegacyWrite(ctx, uid, vaultID); err != nil {
+		return err
+	}
 	// 1. Verify if vault exists and belongs to user
 	// 1. 确认 Vault 是否存在且属于该用户
 	if _, err := s.Get(ctx, uid, vaultID); err != nil {
@@ -507,4 +522,3 @@ func (s *vaultService) ForceDeleteDataItem(ctx context.Context, uid int64, vault
 
 	return nil
 }
-

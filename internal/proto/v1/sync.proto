@@ -645,4 +645,171 @@ message FolderSyncPageAckRequest {
     int32 pageIndex = 3;
 }
 
+// ------------------------------------
+// 6. Safe Revision Sync
+// ------------------------------------
+
+message SafeSyncStatusRequest {
+    string vault = 1;
+}
+
+message SafeSyncStatusResponse {
+    bool capability = 1;
+    string state = 2;
+    int64 latestVaultRevision = 3;
+    bool migrationVerified = 4;
+    string bootstrapSessionId = 5;
+    int64 bootstrapExpiresAt = 6;
+    int64 uid = 7;
+    int64 vaultId = 8;
+}
+
+message SafeSyncBootstrapStartRequest {
+    string vault = 1;
+    string deviceId = 2;
+    string context = 3;
+}
+
+message SafeSyncBootstrapStartResponse {
+    string state = 1;
+    string sessionId = 2;
+    int64 expiresAt = 3;
+    int64 snapshotVaultRevision = 4;
+    string manifestHash = 5;
+    int64 resourceCount = 6;
+    string cursor = 7;
+}
+
+message SafeSyncBootstrapPageRequest {
+    string vault = 1;
+    string sessionId = 2;
+    string cursor = 3;
+    int32 pageSize = 4;
+    string context = 5;
+}
+
+message SafeSyncManifestItem {
+    string resourceId = 1;
+    string resourceType = 2;
+    string path = 3;
+    string pathHash = 4;
+    string state = 5;
+    int64 resourceRevision = 6;
+    string contentHash = 7;
+    int64 size = 8;
+}
+
+message SafeSyncBootstrapPageResponse {
+    string sessionId = 1;
+    int64 snapshotVaultRevision = 2;
+    string manifestHash = 3;
+    repeated SafeSyncManifestItem items = 4;
+    string nextCursor = 5;
+}
+
+message SafeSyncBootstrapCommitRequest {
+    string vault = 1;
+    string sessionId = 2;
+    string manifestHash = 3;
+    int64 snapshotVaultRevision = 4;
+    string context = 5;
+}
+
+message SafeSyncBootstrapCancelRequest {
+    string vault = 1;
+    string sessionId = 2;
+    string context = 3;
+}
+
+message SafeSyncEventsRequest {
+    string vault = 1;
+    int64 afterRevision = 2;
+    int32 pageSize = 3;
+    string context = 4;
+}
+
+message SafeSyncEvent {
+    int64 vaultRevision = 1;
+    string resourceId = 2;
+    int64 resourceRevision = 3;
+    string resourceType = 4;
+    string action = 5;
+    string path = 6;
+    string previousPath = 7;
+    string contentHash = 8;
+    string state = 9;
+    string transactionId = 10;
+    string operationId = 11;
+}
+
+message SafeSyncEventsResponse {
+    repeated SafeSyncEvent events = 1;
+    int64 latestVaultRevision = 2;
+    int64 nextRevision = 3;
+    bool hasMore = 4;
+}
+
+message SafeMutationRequest {
+    string vault = 1;
+    string context = 2;
+    string deviceId = 3;
+    string operationId = 4;
+    string resourceId = 5;
+    int64 baseRevision = 6;
+    string baseHash = 7;
+    string expectedPathState = 8;
+    string action = 9;
+    string path = 10;
+    string pathHash = 11;
+    string previousPath = 12;
+    string previousPathHash = 13;
+    string content = 14;
+    string contentHash = 15;
+    int64 size = 16;
+    int64 ctime = 17;
+    int64 mtime = 18;
+}
+
+message SafeMutationResponse {
+    string resourceId = 1;
+    int64 resourceRevision = 2;
+    int64 vaultRevision = 3;
+    string contentHash = 4;
+    string outcome = 5;
+}
+
+message SafeFileUploadStartRequest {
+    SafeMutationRequest mutation = 1;
+    int64 chunkSize = 2;
+}
+
+message SafeFileUploadStartResponse {
+    string sessionId = 1;
+    int64 nextChunkIndex = 2;
+    string operationId = 3;
+    int64 expiresAt = 4;
+}
+
+message SafeFileUploadCommitRequest {
+    string vault = 1;
+    string context = 2;
+    string deviceId = 3;
+    string operationId = 4;
+    string sessionId = 5;
+    string contentHash = 6;
+    int64 size = 7;
+}
+
+message SafeSyncErrorData {
+    string errorCode = 1;
+    string resourceId = 2;
+    int64 expectedRevision = 3;
+    int64 actualRevision = 4;
+    string currentHash = 5;
+    string currentPath = 6;
+    string currentPathState = 7;
+    string operationId = 8;
+    bool retryable = 9;
+}
+
 

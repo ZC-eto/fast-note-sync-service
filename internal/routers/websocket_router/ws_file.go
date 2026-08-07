@@ -2,13 +2,13 @@ package websocket_router
 
 import (
 	"context"
-	"errors"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -62,6 +62,10 @@ type FileUploadBinaryChunkSession struct {
 	uploadedChunks map[uint32]struct{} // Record of uploaded chunk indices for idempotency // 已上传分块索引记录，用于幂等
 	isCompleted    bool                // Whether upload is completely finished // 上传是否已彻底完成
 	Context        string              // Context // 上下文
+	SafeUpload     bool
+	SafeMutation   *dto.SafeMutationRequest
+	UploadReady    bool
+	ExpiresAt      time.Time
 }
 
 func (s *FileUploadBinaryChunkSession) Cleanup() {
@@ -110,6 +114,17 @@ func (s *FileUploadBinaryChunkSession) GetPathHash() string {
 
 func (s *FileUploadBinaryChunkSession) GetCreatedAt() time.Time {
 	return s.CreatedAt
+}
+
+func (s *FileUploadBinaryChunkSession) nextChunkIndex() int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for index := int64(0); index < s.TotalChunks; index++ {
+		if _, ok := s.uploadedChunks[uint32(index)]; !ok {
+			return index
+		}
+	}
+	return s.TotalChunks
 }
 
 // FileDownloadChunkSession defines the session state for file chunk download
@@ -330,6 +345,32 @@ func (h *FileWSHandler) FileUploadChunkBinary(c *pkgapp.WebsocketClient, data []
 			zap.Int64("totalSize", session.Size),
 			zap.Int64("uploadedChunks", uploadedChunks),
 			zap.Int64("totalChunks", totalChunks))
+
+		if session.SafeUpload {
+			session.mu.Lock()
+			if session.UploadedBytes != session.Size {
+				session.mu.Unlock()
+				h.handleFileUploadSessionCleanup(c, sessionID)
+				h.respondErrorWithData(c, code.ErrorFileUploadFailed, errors.New("safe upload size does not match session"), map[string]string{"sessionID": sessionID}, "websocket_router.file.FileUploadChunkBinary.SafeSize")
+				return
+			}
+			if session.FileHandle != nil {
+				if err := session.FileHandle.Sync(); err != nil {
+					session.mu.Unlock()
+					h.respondErrorWithData(c, code.ErrorFileUploadFailed, err, map[string]string{"sessionID": sessionID}, "websocket_router.file.FileUploadChunkBinary.SafeSync")
+					return
+				}
+				if err := session.FileHandle.Close(); err != nil {
+					session.mu.Unlock()
+					h.respondErrorWithData(c, code.ErrorFileUploadFailed, err, map[string]string{"sessionID": sessionID}, "websocket_router.file.FileUploadChunkBinary.SafeClose")
+					return
+				}
+				session.FileHandle = nil
+			}
+			session.UploadReady = true
+			session.mu.Unlock()
+			return
+		}
 
 		// NOTE: Session removal is delayed until UploadComplete is successful
 		// 注意：Session 的移除延迟到 UploadComplete 成功之后
@@ -878,8 +919,8 @@ func (h *FileWSHandler) doFileSync(c *pkgapp.WebsocketClient, params *dto.FileSy
 			if fileSvc != nil && fileSvc.Action != "delete" {
 
 				messageQueue = append(messageQueue, dto.WSQueuedMessage{
-						Context: params.Context,
-					Action: FileSyncUpdate,
+					Context: params.Context,
+					Action:  FileSyncUpdate,
 					Data: dto.FileSyncModifyMessage{
 						Path:             fileSvc.Path,
 						PathHash:         fileSvc.PathHash,
@@ -916,8 +957,8 @@ func (h *FileWSHandler) doFileSync(c *pkgapp.WebsocketClient, params *dto.FileSy
 			}
 			// 将消息添加到队列
 			messageQueue = append(messageQueue, dto.WSQueuedMessage{
-						Context: params.Context,
-				Action: FileSyncDelete,
+				Context: params.Context,
+				Action:  FileSyncDelete,
 				Data: dto.FileSyncDeleteMessage{
 					Path:             file.Path,
 					PathHash:         file.PathHash,
@@ -956,9 +997,9 @@ func (h *FileWSHandler) doFileSync(c *pkgapp.WebsocketClient, params *dto.FileSy
 						}
 						// 将消息添加到队列而非立即发送
 						messageQueue = append(messageQueue, dto.WSQueuedMessage{
-						Context: params.Context,
-							Action: FileSyncUpdate,
-							Data:   fileMessage,
+							Context: params.Context,
+							Action:  FileSyncUpdate,
+							Data:    fileMessage,
 						})
 						needModifyCount++
 					} else {
@@ -971,8 +1012,8 @@ func (h *FileWSHandler) doFileSync(c *pkgapp.WebsocketClient, params *dto.FileSy
 							}
 							// 将消息添加到队列而非立即发送
 							messageQueue = append(messageQueue, dto.WSQueuedMessage{
-						Context: params.Context,
-								Action: FileUpload,
+								Context: params.Context,
+								Action:  FileUpload,
 								Data: dto.FileSyncUploadMessage{
 									Path:      session.Path,
 									PathHash:  session.PathHash,
@@ -995,7 +1036,7 @@ func (h *FileWSHandler) doFileSync(c *pkgapp.WebsocketClient, params *dto.FileSy
 					// 将消息添加到队列而非立即发送
 					messageQueue = append(messageQueue, dto.WSQueuedMessage{
 						Context: params.Context,
-						Action: FileSyncMtime,
+						Action:  FileSyncMtime,
 						Data: dto.FileSyncMtimeMessage{
 							Path:             file.Path,
 							Ctime:            file.Ctime,
@@ -1010,8 +1051,8 @@ func (h *FileWSHandler) doFileSync(c *pkgapp.WebsocketClient, params *dto.FileSy
 				// 客户端没有的文件, 通知客户端下载文件
 				// 将消息添加到队列而非立即发送
 				messageQueue = append(messageQueue, dto.WSQueuedMessage{
-						Context: params.Context,
-					Action: FileSyncUpdate,
+					Context: params.Context,
+					Action:  FileSyncUpdate,
 					Data: dto.FileSyncModifyMessage{
 						Path:             file.Path,
 						PathHash:         file.PathHash,
@@ -1047,8 +1088,8 @@ func (h *FileWSHandler) doFileSync(c *pkgapp.WebsocketClient, params *dto.FileSy
 				}
 				// Add message to queue instead of sending immediately
 				messageQueue = append(messageQueue, dto.WSQueuedMessage{
-						Context: params.Context,
-					Action: FileUpload,
+					Context: params.Context,
+					Action:  FileUpload,
 					Data: dto.FileSyncUploadMessage{
 						Path:      session.Path,
 						PathHash:  session.PathHash,
@@ -1125,7 +1166,6 @@ func (h *FileWSHandler) FileSyncPageAck(c *pkgapp.WebsocketClient, msg *pkgapp.W
 	handlePageAck(c, entry, params.PageIndex, "file", h.App.Logger(), c.TraceID)
 }
 
-
 // cleanupSession cleans up discarded upload sessions due to completion or timeout.
 // cleanupSession 清理因为完成或超时而废弃的上传会话。
 func (h *FileWSHandler) handleFileUploadSessionCleanup(c *pkgapp.WebsocketClient, sessionID string) {
@@ -1180,12 +1220,21 @@ func (h *FileWSHandler) handleFileUploadSessionTimeout(c *pkgapp.WebsocketClient
 
 // handleFileUploadSession initializes a file upload session and returns upload message.
 // handleFileUploadSession 初始化一个文件上传会话并返回上传消息.
-func (h *FileWSHandler) handleFileUploadSessionCreate(c *pkgapp.WebsocketClient, vault, path, pathHash, contentHash string, size, ctime, mtime int64, context string) (*FileUploadBinaryChunkSession, error) {
+func (h *FileWSHandler) handleFileUploadSessionCreate(c *pkgapp.WebsocketClient, vault, path, pathHash, contentHash string, size, ctime, mtime int64, context string, safeMutations ...*dto.SafeMutationRequest) (*FileUploadBinaryChunkSession, error) {
+	var safeMutation *dto.SafeMutationRequest
+	if len(safeMutations) > 0 && safeMutations[0] != nil {
+		copyMutation := *safeMutations[0]
+		safeMutation = &copyMutation
+	}
 	// Check if there is an active session for the same path hash, reuse it if attributes match
 	// 检查是否已存在相同路径哈希的活跃会话，如果属性一致则直接复用
 	if existingSession := c.Server.GetSessionByPathHash(c.User.ID, pathHash); existingSession != nil {
 		if session, ok := existingSession.(*FileUploadBinaryChunkSession); ok {
-			if session.ContentHash == contentHash && session.Vault == vault && session.Size == size {
+			sameSafeIdentity := !session.SafeUpload && safeMutation == nil
+			if session.SafeUpload && safeMutation != nil && session.SafeMutation != nil {
+				sameSafeIdentity = session.SafeMutation.DeviceID == safeMutation.DeviceID && session.SafeMutation.OperationID == safeMutation.OperationID
+			}
+			if session.ContentHash == contentHash && session.Vault == vault && session.Size == size && sameSafeIdentity {
 				h.App.Logger().Info("FileUploadSessionCreate: reusing existing active session for path hash",
 					zap.String("traceId", c.TraceID),
 					zap.Int64("uid", c.User.UID),
@@ -1259,6 +1308,8 @@ func (h *FileWSHandler) handleFileUploadSessionCreate(c *pkgapp.WebsocketClient,
 		CreatedAt:      time.Now(),
 		uploadedChunks: make(map[uint32]struct{}),
 		Context:        context,
+		SafeUpload:     safeMutation != nil,
+		SafeMutation:   safeMutation,
 	}
 	// Adjust chunk size based on file size
 	// 根据文件大小调整分块大小
@@ -1283,6 +1334,13 @@ func (h *FileWSHandler) handleFileUploadSessionCreate(c *pkgapp.WebsocketClient,
 	// Start timeout cleanup task
 	// 启动超时清理任务
 	session.CancelFunc = h.handleFileUploadSessionTimeout(c, sessionID, timeout)
+	session.ExpiresAt = session.CreatedAt.Add(timeout)
+	if session.SafeUpload && session.Size == 0 {
+		if err := os.WriteFile(session.SavePath, nil, 0o600); err != nil {
+			return nil, err
+		}
+		session.UploadReady = true
+	}
 
 	// Register to global server
 	// 注册到全局服务器

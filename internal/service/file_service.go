@@ -128,12 +128,13 @@ type fileService struct {
 	backupService  BackupService          // Backup service // 备份服务
 	gitSyncService GitSyncService         // Git sync service // Git 同步服务
 	countTimers    *sync.Map              // Timers for CountSizeSum debounce // CountSizeSum 防抖计时器
+	strictGuard    *StrictVaultWriteGuard
 }
 
 // NewFileService creates FileService instance
 // NewFileService 创建 FileService 实例
-func NewFileService(userRepo domain.UserRepository, fileRepo domain.FileRepository, noteRepo domain.NoteRepository, vaultSvc VaultService, folderSvc FolderService, backupSvc BackupService, gitSyncSvc GitSyncService, syncLogSvc SyncLogService, config *ServiceConfig) FileService {
-	return &fileService{
+func NewFileService(userRepo domain.UserRepository, fileRepo domain.FileRepository, noteRepo domain.NoteRepository, vaultSvc VaultService, folderSvc FolderService, backupSvc BackupService, gitSyncSvc GitSyncService, syncLogSvc SyncLogService, config *ServiceConfig, guards ...*StrictVaultWriteGuard) FileService {
+	service := &fileService{
 		userRepo:       userRepo,
 		fileRepo:       fileRepo,
 		noteRepo:       noteRepo,
@@ -147,6 +148,10 @@ func NewFileService(userRepo domain.UserRepository, fileRepo domain.FileReposito
 		config:         config,
 		countTimers:    &sync.Map{},
 	}
+	if len(guards) > 0 {
+		service.strictGuard = guards[0]
+	}
+	return service
 }
 
 // domainToDTO converts domain model to DTO
@@ -243,6 +248,9 @@ func (s *fileService) UpdateOrCreate(ctx context.Context, uid int64, params *dto
 	// 使用 VaultService.MustGetID 获取 VaultID
 	vaultID, err := s.vaultService.MustGetID(ctx, uid, params.Vault)
 	if err != nil {
+		return false, nil, err
+	}
+	if err := s.strictGuard.CheckLegacyWrite(ctx, uid, vaultID); err != nil {
 		return false, nil, err
 	}
 
@@ -396,6 +404,9 @@ func (s *fileService) Delete(ctx context.Context, uid int64, params *dto.FileDel
 	if err != nil {
 		return nil, err
 	}
+	if err := s.strictGuard.CheckLegacyWrite(ctx, uid, vaultID); err != nil {
+		return nil, err
+	}
 
 	file, err := s.fileRepo.GetByPathHash(ctx, params.PathHash, vaultID, uid)
 	if err != nil {
@@ -432,6 +443,9 @@ func (s *fileService) Restore(ctx context.Context, uid int64, params *dto.FileRe
 	// Use VaultService.MustGetID to retrieve VaultID // 使用 VaultService.MustGetID 获取 VaultID
 	vaultID, err := s.vaultService.MustGetID(ctx, uid, params.Vault)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.strictGuard.CheckLegacyWrite(ctx, uid, vaultID); err != nil {
 		return nil, err
 	}
 
@@ -802,6 +816,9 @@ func (s *fileService) Rename(ctx context.Context, uid int64, params *dto.FileRen
 	if err != nil {
 		return nil, nil, err
 	}
+	if err := s.strictGuard.CheckLegacyWrite(ctx, uid, vaultID); err != nil {
+		return nil, nil, err
+	}
 
 	newPath := strings.Trim(params.Path, "/")
 	newPathHash := params.PathHash
@@ -953,6 +970,7 @@ func (s *fileService) WithClient(clientType, name, version string) FileService {
 		backupService:  s.backupService,
 		gitSyncService: s.gitSyncService,
 		countTimers:    s.countTimers, // Share the same timer map // 共享同一个计时器 map
+		strictGuard:    s.strictGuard,
 	}
 }
 
@@ -960,6 +978,9 @@ func (s *fileService) WithClient(clientType, name, version string) FileService {
 func (s *fileService) RecycleClear(ctx context.Context, uid int64, params *dto.FileRecycleClearRequest) error {
 	vaultID, err := s.vaultService.MustGetID(ctx, uid, params.Vault)
 	if err != nil {
+		return err
+	}
+	if err := s.strictGuard.CheckLegacyWrite(ctx, uid, vaultID); err != nil {
 		return err
 	}
 
@@ -1002,6 +1023,9 @@ func (s *fileService) RecycleClear(ctx context.Context, uid int64, params *dto.F
 
 // CleanDuplicateFiles 清理重复的文件记录
 func (s *fileService) CleanDuplicateFiles(ctx context.Context, uid int64, vaultID int64) error {
+	if err := s.strictGuard.CheckLegacyWrite(ctx, uid, vaultID); err != nil {
+		return err
+	}
 	// 获取所有文件（包含已删除，以便全局去重）
 	files, err := s.fileRepo.ListByUpdatedTimestamp(ctx, 0, vaultID, uid)
 	if err != nil {

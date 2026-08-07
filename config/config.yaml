@@ -254,6 +254,10 @@ database:
 
 # 用户隔离数据库设置, 如果不设置(Type设置为空), 则使用主数据库
 # User isolation database settings, if not set(Type is empty), use the main database
+# Dokploy 可通过 FNS_USER_DATABASE_TYPE/HOST/PORT/USERNAME/PASSWORD/NAME/SSL_MODE/SCHEMA
+# 覆盖本节连接字段，避免把生产凭证写入仓库。
+# Dokploy can override these connection fields with
+# FNS_USER_DATABASE_TYPE/HOST/PORT/USERNAME/PASSWORD/NAME/SSL_MODE/SCHEMA.
 user-database:
   # 数据库类型: sqlite | mysql | postgres
   # Database type: sqlite | mysql | postgres
