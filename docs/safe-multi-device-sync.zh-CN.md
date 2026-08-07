@@ -2,8 +2,8 @@
 
 ## 文档状态
 
-- 状态：第一阶段实现与本地验证完成；Dokploy 自用发布尚未执行
-- 日期：2026-08-06
+- 状态：第一阶段实现、本地验证、Dokploy 自用部署和 Windows 插件普通同步 smoke 已完成；Android 与安全同步首次激活待执行
+- 日期：2026-08-07
 - 服务端基线：Fast Note Sync Service `3.6.0-10-gf98f85cd`
 - 插件端基线：Obsidian Fast Note Sync `2.4.0`
 - 工作分支：两个 fork 均为 `feat/safe-multi-device-sync`
@@ -23,7 +23,19 @@
 - 客户端 baseline/pending 按 `serverFingerprint + uid + vaultId` 双写持久化；远端事件按 Vault Revision 串行应用，分页中断后从持久化 Revision 重新拉取。
 - 远端删除只有在本地无 pending、存在已确认基准且当前 hash 匹配时才执行；写入恢复区失败会阻止删除和基准推进。
 
-尚未完成的外部动作：Dokploy 备份、SQLite 到公用 PostgreSQL 的生产 dry-run/导入、服务切换、真实桌面/Android 插件更新和复制 Vault smoke。上述动作属于自用发布步骤，执行前必须再次核验备份与回滚点。
+### 2026-08-07 自用部署记录
+
+- 服务端 fork 提交为 `16481cf80381a67525df85451e85404ac1f9f15c`；Dokploy 从该固定提交构建 `fast-note-sync-safe-local:16481cf`。GHCR 同时保留 `ghcr.io/zc-eto/fast-note-sync-service:safe-sync-16481cf`，digest 为 `sha256:792e3920d7208536c91a28ca9c36953337efdc79c449c691db24db8f3920c38f`，但当前部署不依赖私有 GHCR。
+- 新项目 `Fast Note Sync Safe` 使用 Raw Docker Compose，Project ID 为 `OYjtnXHVjLi9RU90CGUVv`，Compose ID 为 `02ETDVvAGzvwANUcbK7AT`，`autoDeploy=false`。服务名为 `fast-note-sync-safe`，内部别名为 `fast-note-sync-safe` 和 `fns-safe`，只在共享 `dokploy-network` 暴露容器端口 `9000`。
+- 临时公网入口为 `https://fast-note-sync-safe-1irxvu-6387b0-23-144-4-140.sslip.io`；`GET /api/health` 返回 `healthy`、版本 `3.6.0-safe-sync.1` 且数据库 `connected`。最终 Compose 仅保留主服务，没有遗留一次性迁移容器。
+- 持久卷为 `fast-note-sync-safe-storage` 和 `fast-note-sync-safe-config`；安全同步 staging/recovery 位于 storage 持久卷内，不依赖容器层。
+- 用户库接入现有共享 PostgreSQL `postgres-main`，未新建 PostgreSQL 服务。数据库为 `fast_note_sync_safe`，应用角色为 `fast_note_sync_app`；管理员凭证不在 Compose 中，应用密码只保存在 Dokploy 的 `FNS_DB_PASSWORD` 环境变量。
+- UID 1 的 SQLite 数据已导入 PostgreSQL。首次 `--apply` 与第二次幂等 `--apply` 均为 `verified=true`，14 张表的行数、最大主键和关键字段摘要一致。默认 dry-run 只盘点 SQLite 源端，目标计数为 0 是只读设计行为，不代表数据缺失。
+- 旧 Compose `5EkxiW3L8n8mgdu6dp0Vg`、旧镜像 `haierkeys/fast-note-sync-service:3.3.1`、原卷和 `https://fns.prismio.net` 均保持运行且未被覆盖。旧 storage/config 已分别备份到 Cloudflare R2，备份 ID 为 `ZXiRAw7hpEYBMmrhHt6RZ` 和 `8Hh2pY5oGL2HsQ_opwdtO`，两次手动备份状态均为 `done`，构成回滚点。
+- Windows Vault `E:\Document\Notes` 已安装插件 `2.4.1`（插件提交 `3c784a98c50e33bca870525ab4ea33823c40bcbf`）。安装前产物保存在 `.obsidian/plugin-backups/fast-note-sync/2.4.0-before-safe-sync-20260807-091747`。
+- Obsidian 运行时已确认插件加载、现有授权令牌可用、WebSocket 鉴权成功并完成一次普通增量同步；设置页显示“安全多端同步”，当前为“未启用”，`safeRevisionSyncEnabled=false`，服务端 Vault 状态为 `OFF`。本次没有开启 bootstrap，也没有执行删除、镜像或覆盖测试。
+
+仍待完成：Android 插件安装与跨设备 smoke，以及由用户显式开启后的首次安全同步 bootstrap。首次激活若出现清单 mismatch，必须保持 fail-closed，不得强制覆盖。
 
 ## 一、目标
 
@@ -708,7 +720,7 @@ pnpm test:vault-name
 - 插件 `pnpm build`：通过。
 - 当前本机 Node 为 `v22.20.0`，低于项目声明的 `>=24.14.0`，pnpm 命令会显示 engine warning；发布环境应使用满足声明的 Node 版本再次构建。
 
-尚未验证：Dokploy 公用 PostgreSQL 的真实 dry-run/导入、服务健康、回滚点、桌面/Android 插件加载和复制 Vault smoke。这些证据必须在自用发布阶段补齐。
+Dokploy 公用 PostgreSQL 导入、重复导入校验、服务健康、回滚点和 Windows 插件加载证据已于 2026-08-07 补齐，详见上方“自用部署记录”。Android 加载、跨设备 smoke 和首次安全同步 bootstrap 尚未执行，因此不能据此声称 Android 或安全同步端到端验收已完成。
 
 ### 自用 PostgreSQL 迁移命令
 

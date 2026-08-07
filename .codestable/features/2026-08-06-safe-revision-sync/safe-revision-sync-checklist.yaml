@@ -34,6 +34,12 @@ steps:
     action: "自用发布：构建 fork 服务，备份 SQLite/config/storage，导入并切换 Dokploy 公用 PostgreSQL，更新 Obsidian 插件和执行复制 Vault smoke"
     exit_signal: "服务健康、PostgreSQL 迁移校验通过、插件版本一致、AC-15/AC-16/AC-21 有证据且回滚点可用"
     status: pending
+    evidence:
+      - "docs/safe-multi-device-sync.zh-CN.md#2026-08-07-自用部署记录"
+      - "服务 16481cf 已部署到独立 Compose，健康检查为 healthy/database connected"
+      - "UID 1 PostgreSQL 首次与重复 --apply 均 verified=true，14 张表校验一致"
+      - "Windows Obsidian 已加载插件 2.4.1，WebSocket 鉴权和普通增量同步成功，安全开关保持关闭"
+    remaining: "按用户计划暂缓 Android；首次安全同步 bootstrap 仍需用户显式开启，因此 S8 与 AC-16 端到端状态保持 pending"
 
 checks:
   - id: C1
@@ -71,11 +77,13 @@ checks:
   - id: C9
     item: "Dokploy 使用 fork 构建，storage/config/staging 持久化、备份并有可验证回滚点"
     source: 挂载点
-    status: pending
+    status: done
+    evidence: "独立 Compose 02ETDVvAGzvwANUcbK7AT 使用固定提交 16481cf、dokploy-network 和 storage/config 持久卷；旧 Compose/域名保留，R2 storage/config 备份均为 done"
   - id: C10
     item: "本机 Obsidian 插件产物、manifest 版本和加载版本一致"
     source: 验收场景
-    status: pending
+    status: done
+    evidence: "Windows 插件目录中的 manifest 与运行时加载版本均为 2.4.1，main.js/manifest.json/styles.css 已替换且有 2.4.0 回滚目录"
   - id: C11
     item: "创建使用 absent/0 前置条件并由服务端分配 Resource ID；附件只有 commit 校验 hash 后产生 revision"
     source: 协议契约
@@ -99,7 +107,8 @@ checks:
   - id: C16
     item: "安全修订 capability 仅在 PostgreSQL 用户库且 SQLite 导入校验完成后可用；导入可重入、保留主键并可回滚"
     source: PostgreSQL 部署前提
-    status: pending
+    status: done
+    evidence: "共享 PostgreSQL 数据库 fast_note_sync_safe 的 UID 1 首次与重复导入均 verified=true；行数、最大主键和关键摘要一致，客户端观察到 capability=true"
 
 dod:
   commands:
