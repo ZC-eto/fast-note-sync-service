@@ -1,16 +1,15 @@
-[简体中文](https://github.com/haierkeys/fast-note-sync-service/blob/master/docs/README.zh-CN.md) / [English](https://github.com/haierkeys/fast-note-sync-service/blob/master/README.md) / [日本語](https://github.com/haierkeys/fast-note-sync-service/blob/master/docs/README.ja.md) / [한국어](https://github.com/haierkeys/fast-note-sync-service/blob/master/docs/README.ko.md) / [繁體中文](https://github.com/haierkeys/fast-note-sync-service/blob/master/docs/README.zh-TW.md)
+[简体中文](https://github.com/ZC-eto/fast-note-sync-service/blob/master/docs/README.zh-CN.md) / [English](https://github.com/ZC-eto/fast-note-sync-service/blob/master/README.md) / [日本語](https://github.com/ZC-eto/fast-note-sync-service/blob/master/docs/README.ja.md) / [한국어](https://github.com/ZC-eto/fast-note-sync-service/blob/master/docs/README.ko.md) / [繁體中文](https://github.com/ZC-eto/fast-note-sync-service/blob/master/docs/README.zh-TW.md)
 
-문제가 발생하면 [issue](https://github.com/haierkeys/fast-note-sync-service/issues/new)를 생성하거나 텔레그램 그룹에 가입하여 도움을 요청하세요: [https://t.me/obsidian_users](https://t.me/obsidian_users)
+문제가 발생하면 [issue](https://github.com/ZC-eto/fast-note-sync-service/issues/new)를 생성하거나 텔레그램 그룹에 가입하여 도움을 요청하세요: [https://t.me/obsidian_users](https://t.me/obsidian_users)
 
-중국 본토 사용자의 경우 Tencent cnb.cool 미러 저장소를 사용하는 것을 권장합니다: [https://cnb.cool/haierkeys/fast-note-sync-service](https://cnb.cool/haierkeys/fast-note-sync-service)
 
 
 <h1 align="center">Fast Note Sync Service</h1>
 
 <p align="center">
-    <a href="https://github.com/haierkeys/fast-note-sync-service/releases"><img src="https://img.shields.io/github/release/haierkeys/fast-note-sync-service?style=flat-square" alt="release"></a>
-    <a href="https://github.com/haierkeys/fast-note-sync-service/releases"><img src="https://img.shields.io/github/v/tag/haierkeys/fast-note-sync-service?label=release-alpha&style=flat-square" alt="alpha-release"></a>
-    <a href="https://github.com/haierkeys/fast-note-sync-service/blob/master/LICENSE"><img src="https://img.shields.io/github/license/haierkeys/fast-note-sync-service?style=flat-square" alt="license"></a>
+    <a href="https://github.com/ZC-eto/fast-note-sync-service/releases"><img src="https://img.shields.io/github/release/ZC-eto/fast-note-sync-service?style=flat-square" alt="release"></a>
+    <a href="https://github.com/ZC-eto/fast-note-sync-service/releases"><img src="https://img.shields.io/github/v/tag/ZC-eto/fast-note-sync-service?label=release-alpha&style=flat-square" alt="alpha-release"></a>
+    <a href="https://github.com/ZC-eto/fast-note-sync-service/blob/master/LICENSE"><img src="https://img.shields.io/github/license/ZC-eto/fast-note-sync-service?style=flat-square" alt="license"></a>
     <img src="https://img.shields.io/badge/Language-Go-00ADD8?style=flat-square" alt="Go">
 </p>
 
@@ -21,7 +20,7 @@
 </p>
 
 <p align="center">
-  데이터 제공은 클라이언트 플러그인과 함께 사용해야 합니다: <a href="https://github.com/haierkeys/obsidian-fast-note-sync">Obsidian Fast Note Sync Plugin</a>
+  데이터 제공은 클라이언트 플러그인과 함께 사용해야 합니다: <a href="https://github.com/ZC-eto/obsidian-fast-note-sync">Obsidian Fast Note Sync Plugin</a>
 </p>
 
 <div align="center">
@@ -97,8 +96,7 @@
   | [<img src="/docs/images/kofi.png" alt="BuyMeACoffee" height="150">](https://ko-fi.com/haierkeys) | 또는 | <img src="/docs/images/wxds.png" height="150"> |
 
   - 후원자 명단:
-    - <a href="https://github.com/haierkeys/fast-note-sync-service/blob/master/docs/Support.ko.md">Support.ko.md</a>
-    - <a href="https://cnb.cool/haierkeys/fast-note-sync-service/-/blob/master/docs/Support.ko.md">Support.ko.md (cnb.cool 미러 저장소)</a>
+    - <a href="https://github.com/ZC-eto/fast-note-sync-service/blob/master/docs/Support.ko.md">Support.ko.md</a>
 
 ## ⏱️ 업데이트 로그
 
@@ -129,12 +127,11 @@
 시스템 환경을 자동으로 감지하고 설치 및 서비스 등록을 완료합니다.
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/haierkeys/fast-note-sync-service/master/scripts/quest_install.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/ZC-eto/fast-note-sync-service/master/scripts/quest_install.sh)
 ```
 
 중국 지역은 Tencent `cnb.cool` 미러 소스를 사용할 수 있습니다:
 ```bash
-bash <(curl -fsSL https://cnb.cool/haierkeys/fast-note-sync-service/-/git/raw/master/scripts/quest_install.sh) --cnb
 ```
 
 
@@ -154,14 +151,14 @@ bash <(curl -fsSL https://cnb.cool/haierkeys/fast-note-sync-service/-/git/raw/ma
 
 ```bash
 # 1. 이미지 풀
-docker pull haierkeys/fast-note-sync-service:latest
+docker pull ghcr.io/zc-eto/fast-note-sync-service:latest
 
 # 2. 컨테이너 시작
 docker run -tid --name fast-note-sync-service \
     -p 9000:9000 \
     -v /data/fast-note-sync/storage/:/fast-note-sync/storage/ \
     -v /data/fast-note-sync/config/:/fast-note-sync/config/ \
-    haierkeys/fast-note-sync-service:latest
+    ghcr.io/zc-eto/fast-note-sync-service:latest
 ```
 
 #### Docker Compose
@@ -172,7 +169,7 @@ docker-compose.yaml 파일 생성:
 version: '3'
 services:
   fast-note-sync-service:
-    image: haierkeys/fast-note-sync-service:latest
+    image: ghcr.io/zc-eto/fast-note-sync-service:latest
     container_name: fast-note-sync-service
     restart: always
     ports:
@@ -192,7 +189,7 @@ docker compose up -d
 
 ### 방법 3: 수동 바이너리 설치
 
-[Releases](https://github.com/haierkeys/fast-note-sync-service/releases)에서 해당 시스템용 최신 버전을 다운로드하고 압축을 푼 후 실행합니다:
+[Releases](https://github.com/ZC-eto/fast-note-sync-service/releases)에서 해당 시스템용 최신 버전을 다운로드하고 압축을 푼 후 실행합니다:
 
 ```bash
 ./fast-note-sync-service run -c config/config.yaml
@@ -214,11 +211,11 @@ docker compose up -d
 
 기본 구성 파일은 `config.yaml`입니다. 프로그램은 **루트 디렉터리** 또는 **config/** 디렉터리에서 자동으로 검색합니다.
 
-전체 구성 예 보기: [config/config.yaml](https://github.com/haierkeys/fast-note-sync-service/blob/master/config/config.yaml)
+전체 구성 예 보기: [config/config.yaml](https://github.com/ZC-eto/fast-note-sync-service/blob/master/config/config.yaml)
 
 ## 🌐 Nginx 역방향 프록시 예
 
-전체 구성 예 보기: [https-nginx-example.conf](https://github.com/haierkeys/fast-note-sync-service/blob/master/scripts/https-nginx-example.conf)
+전체 구성 예 보기: [https-nginx-example.conf](https://github.com/ZC-eto/fast-note-sync-service/blob/master/scripts/https-nginx-example.conf)
 
 ## 🧰 MCP (Model Context Protocol) 지원
 
@@ -302,7 +299,7 @@ SSE 모드는 레거시 전송 프로토콜입니다. 하위 호환성을 유지
 ## 🔗 클라이언트 & 클라이언트 플러그인 & 협력 프로젝트
 
 * Obsidian Fast Note Sync 플러그인
-  * [Obsidian Fast Note Sync 플러그인](https://github.com/haierkeys/obsidian-fast-note-sync) / [cnb.cool 미러 저장소](https://cnb.cool/haierkeys/obsidian-fast-note-sync)
+  * [Obsidian Fast Note Sync 플러그인](https://github.com/ZC-eto/obsidian-fast-note-sync)
 * 제3자 클라이언트
   * [FastNodeSync-CLI](https://github.com/Go1c/FastNodeSync-CLI) FNS WebSocket 동기화 프로토콜을 기반으로 Python으로 구현된 실시간 양방향 동기화 명령줄 클라이언트입니다. GUI가 없는 Linux 서버 환경(예: OpenClaw)에 적합하며 Obsidian 데스크톱/모바일 앱과 동등한 동기화 성능을 제공합니다.
   * [go-fast-note-sync](https://github.com/erichll/go-fast-note-sync) FNS WebSocket 동기화 프로토콜을 기반으로 Go로 개발된 Go CLI 백그라운드 동기화 데몬입니다. 주로 Linux 헤드리스 환경을 대상으로 하며 macOS 및 Windows도 지원합니다.

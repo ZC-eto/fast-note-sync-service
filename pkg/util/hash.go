@@ -40,15 +40,15 @@ const (
 	// FileHashThreshold defines the size threshold (10MB) above which partial hashing is used
 	// FileHashThreshold 定义触发分段哈希的阈值 (10MB)
 	FileHashThreshold = 10 * 1024 * 1024
-	// FileHashSliceSize defines the size of slices taken from the beginning and end of large files (5MB)
-	// FileHashSliceSize 定义大文件分段哈希时首尾读取的大小 (5MB)
+	// FileHashSliceSize defines the size of the beginning, middle, and end samples (5MB each).
+	// FileHashSliceSize 定义大文件开头、中间和结尾采样片段的大小（每段 5MB）。
 	FileHashSliceSize = 5 * 1024 * 1024
 )
 
 // EncodeHash32Bytes performs 32-bit hash encoding on raw bytes.
-// If the data exceeds 10MB, it only hashes the first 5MB and last 5MB.
+// If the data exceeds 10MB, it hashes the first, middle, and last 5MB.
 // EncodeHash32Bytes 对原始字节进行 32 位哈希编码。
-// 如果数据超过 10MB，则仅计算前 5MB 和后 5MB 的哈希。
+// 如果数据超过 10MB，则计算开头、中间和结尾各 5MB 的哈希。
 func EncodeHash32Bytes(data []byte) string {
 	size := len(data)
 	var hash int32 = 0
@@ -59,9 +59,20 @@ func EncodeHash32Bytes(data []byte) string {
 			hash = (hash << 5) - hash + int32(b)
 		}
 	} else {
-		// Large data: hash first 5MB + last 5MB // 大数据：哈希前 5MB + 后 5MB
+		// Keep this sampling order identical to the plugin's hashArrayBuffer.
 		// Hash first 5MB
 		for i := 0; i < FileHashSliceSize; i++ {
+			hash = (hash << 5) - hash + int32(data[i])
+		}
+		// Hash 5MB centered around the file midpoint.
+		middleStart := size/2 - FileHashSliceSize/2
+		if middleStart < 0 {
+			middleStart = 0
+		}
+		if maxStart := size - FileHashSliceSize; middleStart > maxStart {
+			middleStart = maxStart
+		}
+		for i := middleStart; i < middleStart+FileHashSliceSize; i++ {
 			hash = (hash << 5) - hash + int32(data[i])
 		}
 		// Hash last 5MB

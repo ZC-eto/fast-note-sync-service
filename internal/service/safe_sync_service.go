@@ -33,6 +33,7 @@ type SafeSyncService interface {
 	BootstrapCommit(ctx context.Context, uid, vaultID int64, sessionID, manifestHash string, snapshotRevision int64) (*dto.SafeSyncStatusResponse, error)
 	BootstrapCancel(ctx context.Context, uid, vaultID int64, sessionID string) (*dto.SafeSyncStatusResponse, error)
 	Events(ctx context.Context, uid, vaultID, afterRevision int64, pageSize int) (*dto.SafeSyncEventsResponse, error)
+	RegisterDeviceRole(ctx context.Context, uid, vaultID int64, deviceID string, role domain.DeviceSyncRole) (*dto.DeviceRoleStatusResponse, error)
 }
 
 type safeSyncService struct {

@@ -52,7 +52,7 @@ func TestHashBytesConsistency(t *testing.T) {
 		for i := 0; i < 5*1024*1024; i++ {
 			data[i] = 1
 		}
-		// Fill middle 10MB with 3 (should be ignored)
+		// Fill middle 10MB with 3 (the centered 5MB sample must be included)
 		for i := 5 * 1024 * 1024; i < 15*1024*1024; i++ {
 			data[i] = 3
 		}
@@ -61,11 +61,10 @@ func TestHashBytesConsistency(t *testing.T) {
 			data[i] = 2
 		}
 
-		// Calculate expected hash for 5MB of 1s followed by 5MB of 2s
-		// (Same logic as EncodeHash32Bytes does now)
 		got := EncodeHash32Bytes(data)
-		if got == "" {
-			t.Errorf("EncodeHash32Bytes(20MB) returned empty string")
+		data[size/2] = 4
+		if changed := EncodeHash32Bytes(data); changed == got {
+			t.Errorf("EncodeHash32Bytes(20MB) ignored a change in the middle sample")
 		}
 	})
 }

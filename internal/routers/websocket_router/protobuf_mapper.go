@@ -518,6 +518,18 @@ func DeReceiveProtobufToDTO(action WebSocketReceiveAction, data []byte, obj any)
 			dest.Vault = pbMsg.Vault
 			return true, nil
 		}
+	case SafeSyncReceiveDeviceRoleRegister:
+		var pbMsg v1.DeviceRoleRegisterRequest
+		if err := proto.Unmarshal(data, &pbMsg); err != nil {
+			return false, err
+		}
+		if dest, ok := obj.(*dto.DeviceRoleRegisterRequest); ok {
+			dest.Vault = pbMsg.Vault
+			dest.DeviceID = pbMsg.DeviceId
+			dest.Role = pbMsg.Role
+			dest.Context = pbMsg.Context
+			return true, nil
+		}
 	case SafeSyncReceiveBootstrapStart:
 		var pbMsg v1.SafeSyncBootstrapStartRequest
 		if err := proto.Unmarshal(data, &pbMsg); err != nil {
@@ -690,6 +702,13 @@ func enSendDataPayload(action WebSocketSendAction, data any) ([]byte, error) {
 				Capability: src.Capability, State: src.State, LatestVaultRevision: src.LatestVaultRevision,
 				MigrationVerified: src.MigrationVerified, BootstrapSessionId: src.BootstrapSessionID,
 				BootstrapExpiresAt: src.BootstrapExpiresAt, Uid: src.UID, VaultId: src.VaultID,
+			})
+		}
+	case SafeSyncDeviceRoleStatusAck:
+		if src, ok := deviceRoleStatusResponseValue(data); ok {
+			return proto.Marshal(&v1.DeviceRoleStatusResponse{
+				DeviceId: src.DeviceID, Role: src.Role, PublisherDeviceId: src.PublisherDeviceID,
+				PublisherLeaseExpiresAt: src.PublisherLeaseExpiresAt, Writable: src.Writable,
 			})
 		}
 	case SafeSyncBootstrapStartAck:
@@ -1383,6 +1402,16 @@ func safeSyncStatusResponseValue(data any) (dto.SafeSyncStatusResponse, bool) {
 		return *value, true
 	}
 	return dto.SafeSyncStatusResponse{}, false
+}
+
+func deviceRoleStatusResponseValue(data any) (dto.DeviceRoleStatusResponse, bool) {
+	if value, ok := data.(dto.DeviceRoleStatusResponse); ok {
+		return value, true
+	}
+	if value, ok := data.(*dto.DeviceRoleStatusResponse); ok && value != nil {
+		return *value, true
+	}
+	return dto.DeviceRoleStatusResponse{}, false
 }
 
 func safeSyncBootstrapStartResponseValue(data any) (dto.SafeSyncBootstrapStartResponse, bool) {

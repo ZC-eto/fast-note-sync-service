@@ -1,16 +1,15 @@
-[简体中文](https://github.com/haierkeys/fast-note-sync-service/blob/master/docs/README.zh-CN.md) / [English](https://github.com/haierkeys/fast-note-sync-service/blob/master/README.md) / [日本語](https://github.com/haierkeys/fast-note-sync-service/blob/master/docs/README.ja.md) / [한국어](https://github.com/haierkeys/fast-note-sync-service/blob/master/docs/README.ko.md) / [繁體中文](https://github.com/haierkeys/fast-note-sync-service/blob/master/docs/README.zh-TW.md)
+[简体中文](https://github.com/ZC-eto/fast-note-sync-service/blob/master/docs/README.zh-CN.md) / [English](https://github.com/ZC-eto/fast-note-sync-service/blob/master/README.md) / [日本語](https://github.com/ZC-eto/fast-note-sync-service/blob/master/docs/README.ja.md) / [한국어](https://github.com/ZC-eto/fast-note-sync-service/blob/master/docs/README.ko.md) / [繁體中文](https://github.com/ZC-eto/fast-note-sync-service/blob/master/docs/README.zh-TW.md)
 
-If you have any questions, please create an [issue](https://github.com/haierkeys/fast-note-sync-service/issues/new) or join our Telegram group for help: [https://t.me/obsidian_users](https://t.me/obsidian_users)
+If you have any questions, please create an [issue](https://github.com/ZC-eto/fast-note-sync-service/issues/new) or join our Telegram group for help: [https://t.me/obsidian_users](https://t.me/obsidian_users)
 
-For users in Mainland China, it is recommended to use the Tencent cnb.cool mirror repository: [https://cnb.cool/haierkeys/fast-note-sync-service](https://cnb.cool/haierkeys/fast-note-sync-service)
 
 
 <h1 align="center">Fast Note Sync Service</h1>
 
 <p align="center">
-    <a href="https://github.com/haierkeys/fast-note-sync-service/releases"><img src="https://img.shields.io/github/release/haierkeys/fast-note-sync-service?style=flat-square" alt="release"></a>
-    <a href="https://github.com/haierkeys/fast-note-sync-service/releases"><img src="https://img.shields.io/github/v/tag/haierkeys/fast-note-sync-service?label=release-alpha&style=flat-square" alt="alpha-release"></a>
-    <a href="https://github.com/haierkeys/fast-note-sync-service/blob/master/LICENSE"><img src="https://img.shields.io/github/license/haierkeys/fast-note-sync-service?style=flat-square" alt="license"></a>
+    <a href="https://github.com/ZC-eto/fast-note-sync-service/releases"><img src="https://img.shields.io/github/release/ZC-eto/fast-note-sync-service?style=flat-square" alt="release"></a>
+    <a href="https://github.com/ZC-eto/fast-note-sync-service/releases"><img src="https://img.shields.io/github/v/tag/ZC-eto/fast-note-sync-service?label=release-alpha&style=flat-square" alt="alpha-release"></a>
+    <a href="https://github.com/ZC-eto/fast-note-sync-service/blob/master/LICENSE"><img src="https://img.shields.io/github/license/ZC-eto/fast-note-sync-service?style=flat-square" alt="license"></a>
     <img src="https://img.shields.io/badge/Language-Go-00ADD8?style=flat-square" alt="Go">
 </p>
 
@@ -21,7 +20,7 @@ For users in Mainland China, it is recommended to use the Tencent cnb.cool mirro
 </p>
 
 <p align="center">
-  Data provisioning requires integration with the client plugin: <a href="https://github.com/haierkeys/obsidian-fast-note-sync">Obsidian Fast Note Sync Plugin</a>
+  Data provisioning requires integration with the client plugin: <a href="https://github.com/ZC-eto/obsidian-fast-note-sync">Obsidian Fast Note Sync Plugin</a>
 </p>
 
 <div align="center">
@@ -98,8 +97,7 @@ For users in Mainland China, it is recommended to use the Tencent cnb.cool mirro
   | [<img src="/docs/images/kofi.png" alt="BuyMeACoffee" height="150">](https://ko-fi.com/haierkeys) | or | <img src="/docs/images/wxds.png" height="150"> |
 
   - Sponsor List:
-    - <a href="https://github.com/haierkeys/fast-note-sync-service/blob/master/docs/Support.en.md">Support.en.md</a>
-    - <a href="https://cnb.cool/haierkeys/fast-note-sync-service/-/blob/master/docs/Support.en.md">Support.en.md (cnb.cool mirror repository)</a>
+    - <a href="https://github.com/ZC-eto/fast-note-sync-service/blob/master/docs/Support.en.md">Support.en.md</a>
 
 ## ⏱️ Changelog
 
@@ -130,12 +128,11 @@ We provide multiple installation methods. We highly recommend using the **One-cl
 Automatically detects the system environment and completes the installation and service registration.
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/haierkeys/fast-note-sync-service/master/scripts/quest_install.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/ZC-eto/fast-note-sync-service/master/scripts/quest_install.sh)
 ```
 
 For users in China, you can use the Tencent `cnb.cool` mirror source:
 ```bash
-bash <(curl -fsSL https://cnb.cool/haierkeys/fast-note-sync-service/-/git/raw/master/scripts/quest_install.sh) --cnb
 ```
 
 
@@ -155,14 +152,14 @@ bash <(curl -fsSL https://cnb.cool/haierkeys/fast-note-sync-service/-/git/raw/ma
 
 ```bash
 # 1. Pull Image
-docker pull haierkeys/fast-note-sync-service:latest
+docker pull ghcr.io/zc-eto/fast-note-sync-service:latest
 
 # 2. Start Container
 docker run -tid --name fast-note-sync-service \
     -p 9000:9000 \
     -v /data/fast-note-sync/storage/:/fast-note-sync/storage/ \
     -v /data/fast-note-sync/config/:/fast-note-sync/config/ \
-    haierkeys/fast-note-sync-service:latest
+    ghcr.io/zc-eto/fast-note-sync-service:latest
 ```
 
 #### Docker Compose
@@ -173,7 +170,7 @@ Create the `docker-compose.yaml` file:
 version: '3'
 services:
   fast-note-sync-service:
-    image: haierkeys/fast-note-sync-service:latest
+    image: ghcr.io/zc-eto/fast-note-sync-service:latest
     container_name: fast-note-sync-service
     restart: always
     ports:
@@ -193,7 +190,7 @@ docker compose up -d
 
 ### Method 3: Manual Binary Installation
 
-Download the latest version for your system from [Releases](https://github.com/haierkeys/fast-note-sync-service/releases), extract it, and run:
+Download the latest version for your system from [Releases](https://github.com/ZC-eto/fast-note-sync-service/releases), extract it, and run:
 
 ```bash
 ./fast-note-sync-service run -c config/config.yaml
@@ -215,11 +212,11 @@ Download the latest version for your system from [Releases](https://github.com/h
 
 The default configuration file is `config.yaml`. The application automatically searches in the **root directory** or the **config/** directory.
 
-View the complete configuration example: [config/config.yaml](https://github.com/haierkeys/fast-note-sync-service/blob/master/config/config.yaml)
+View the complete configuration example: [config/config.yaml](https://github.com/ZC-eto/fast-note-sync-service/blob/master/config/config.yaml)
 
 ## 🌐 Nginx Reverse Proxy Example
 
-View the complete configuration example: [https-nginx-example.conf](https://github.com/haierkeys/fast-note-sync-service/blob/master/scripts/https-nginx-example.conf)
+View the complete configuration example: [https-nginx-example.conf](https://github.com/ZC-eto/fast-note-sync-service/blob/master/scripts/https-nginx-example.conf)
 
 ## 🧰 MCP (Model Context Protocol) Support
 
@@ -305,7 +302,7 @@ SSE mode is the legacy transport protocol. It is fully retained to maintain back
 ## 🔗 Clients, Client Plugins & Collaboration Projects
 
 * Obsidian Fast Note Sync Plugin
-  * [Obsidian Fast Note Sync Plugin](https://github.com/haierkeys/obsidian-fast-note-sync) / [cnb.cool mirror repository](https://cnb.cool/haierkeys/obsidian-fast-note-sync)
+  * [Obsidian Fast Note Sync Plugin](https://github.com/ZC-eto/obsidian-fast-note-sync)
 * Third-Party Clients
   * [FastNodeSync-CLI](https://github.com/Go1c/FastNodeSync-CLI) A command-line client implemented in Python based on the FNS WebSocket synchronization protocol. It enables real-time, bi-directional sync, suitable for GUI-less Linux server environments (such as OpenClaw), providing the same sync capabilities as the Obsidian desktop and mobile clients.
   * [go-fast-note-sync](https://github.com/erichll/go-fast-note-sync) A Go CLI background synchronization daemon implemented in Go based on the FNS WebSocket sync protocol, primarily targetting headless Linux environments while also supporting macOS and Windows.

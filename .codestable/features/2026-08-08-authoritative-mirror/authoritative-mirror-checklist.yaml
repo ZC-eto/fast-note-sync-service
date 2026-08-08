@@ -1,0 +1,19 @@
+feature: authoritative-mirror
+execution_lane: standard
+status: in_progress
+items:
+  - id: mirror-plan
+    status: done
+    text: implement previewable local/remote authoritative mirror plans
+  - id: mirror-recovery
+    status: done
+    text: create and restore target-side recovery packages
+  - id: device-roles
+    status: done
+    text: enforce bidirectional, local-publisher, and remote-mirror roles
+  - id: fork-updates
+    status: done
+    text: route runtime updates and release workflows to ZC-eto forks
+  - id: release-deploy
+    status: pending
+    text: test, release, deploy, and replace the Windows plugin

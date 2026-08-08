@@ -15,6 +15,21 @@ type SafeSyncStatusResponse struct {
 	VaultID             int64  `json:"vaultId"`
 }
 
+type DeviceRoleRegisterRequest struct {
+	Vault    string `json:"vault" binding:"required"`
+	DeviceID string `json:"deviceId" binding:"required"`
+	Role     string `json:"role" binding:"required"`
+	Context  string `json:"context"`
+}
+
+type DeviceRoleStatusResponse struct {
+	DeviceID                string `json:"deviceId"`
+	Role                    string `json:"role"`
+	PublisherDeviceID       string `json:"publisherDeviceId,omitempty"`
+	PublisherLeaseExpiresAt int64  `json:"publisherLeaseExpiresAt,omitempty"`
+	Writable                bool   `json:"writable"`
+}
+
 type SafeSyncBootstrapStartRequest struct {
 	Vault    string `json:"vault" binding:"required"`
 	DeviceID string `json:"deviceId" binding:"required"`

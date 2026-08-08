@@ -2,17 +2,17 @@
 
 ## 文档状态
 
-- 状态：第一阶段实现、本地验证、Dokploy 自用部署和 Windows 插件普通同步 smoke 已完成；Android 与安全同步首次激活待执行
-- 日期：2026-08-07
-- 服务端基线：Fast Note Sync Service `3.6.0-10-gf98f85cd`
-- 插件端基线：Obsidian Fast Note Sync `2.4.0`
+- 状态：安全修订同步、设备角色、两个权威覆盖方向和最近一次回滚已实现；GitHub 发布、Dokploy 升级与 Windows 实机覆盖验证进行中
+- 日期：2026-08-08
+- 服务端交付版本：Fast Note Sync Service `3.6.1`
+- 插件端交付版本：Obsidian Fast Note Sync `2.5.0`
 - 工作分支：两个 fork 均为 `feat/safe-multi-device-sync`
 - 涉及仓库：`fast-note-sync-service`、`obsidian-fast-note-sync`
 - 实施原则：插件端与服务端必须协同修改，不允许只在一端模拟新语义
 
-## 当前第一阶段实现状态
+## 当前实现状态
 
-当前代码只实现第一阶段“安全修订同步”，不包含后续权威镜像和设备角色：
+当前代码已实现本次自用范围内的安全修订同步、设备角色与手动权威覆盖：
 
 - 插件设置新增默认关闭的 `safeRevisionSyncEnabled`；用户确认后才启动 capability 检查和 bootstrap。
 - 服务端只在 `user-database.type=postgres` 且当前用户的 SQLite 导入校验记录为 `VERIFIED` 时返回 capability；SQLite 用户库和未验证 schema 始终为 unsupported。
@@ -22,6 +22,14 @@
 - 恢复时若目标 hash 已匹配，则只提交一次资源状态、事件、Vault Revision 和 `COMMITTED` 结果；若替换未完成，则恢复 old-image、移除未完成记录并允许同一 operationId 重新提交。未 `COMMITTED` 的操作不会 ACK 或广播。
 - 客户端 baseline/pending 按 `serverFingerprint + uid + vaultId` 双写持久化；远端事件按 Vault Revision 串行应用，分页中断后从持久化 Revision 重新拉取。
 - 远端删除只有在本地无 pending、存在已确认基准且当前 hash 匹配时才执行；写入恢复区失败会阻止删除和基准推进。
+- 每台设备可选择双向端、本地发布端或远端镜像端。本地发布端通过 2 分钟心跳租约阻止其他设备安全写入；远端镜像端的上传在服务端被拒绝。
+- 插件可手动执行“本地覆盖远端”或“远端覆盖本地”，执行前展示 CREATE / UPDATE / DELETE / REPLACE 差异。计划 10 分钟过期；删除或替换达到 50 项或目标清单 10% 时要求输入确认词。
+- 权威覆盖在目标端先保存恢复包，默认保留 30 天；执行后重新读取当前远端清单并校验路径、类型、大小和内容 hash。最近一次覆盖可在二次确认后整批恢复并再次校验。
+- 执行前会重新校验本地清单，预览后任意本地变化都会让计划失效；服务端 bootstrap 同时固定远端修订，避免确认期间覆盖任一侧的新修改。
+- 中文笔记使用与 JavaScript `charCodeAt` 一致的 UTF-16 哈希，超过 10 MB 的附件统一采样开头、中间和结尾各 5 MB；服务端会验证笔记和附件的正文、大小及哈希一致性。
+- Obsidian 在覆盖过程中退出时，状态为 `APPLYING` 的恢复包仍可通过“恢复最近一次权威覆盖”继续回滚；嵌套目录按子项到父目录顺序恢复。
+- “安全多端同步”旁的问号说明修订保护、三种角色、两个覆盖方向、恢复包和 `.obsidian` 边界。设备角色会锁定有冲突的旧“只读同步”与“离线删除上传”开关。
+- 更新检查、安装包下载、Issue、服务端自升级、网页仓库入口和发布工作流均固定使用 `ZC-eto` 的两个 fork，不再访问上游 CNB 更新源。
 
 ### 2026-08-07 自用部署记录
 
@@ -35,7 +43,7 @@
 - Windows Vault `E:\Document\Notes` 已安装插件 `2.4.1`（插件提交 `3c784a98c50e33bca870525ab4ea33823c40bcbf`）。安装前产物保存在 `.obsidian/plugin-backups/fast-note-sync/2.4.0-before-safe-sync-20260807-091747`。
 - Obsidian 运行时已确认插件加载、现有授权令牌可用、WebSocket 鉴权成功并完成一次普通增量同步；设置页显示“安全多端同步”，当前为“未启用”，`safeRevisionSyncEnabled=false`，服务端 Vault 状态为 `OFF`。本次没有开启 bootstrap，也没有执行删除、镜像或覆盖测试。
 
-仍待完成：Android 插件安装与跨设备 smoke，以及由用户显式开启后的首次安全同步 bootstrap。首次激活若出现清单 mismatch，必须保持 fail-closed，不得强制覆盖。
+本轮仍待完成的验证是：新 GitHub Release 与 GHCR 镜像、Dokploy 原新项目原地升级、复制 Vault 的两个权威覆盖方向，以及最终 Windows 插件替换。Android 本轮只保留可手工导入的发布产物，不安装。
 
 ## 一、目标
 
@@ -293,9 +301,9 @@ MutationResult:
 
 - 计划默认 10 分钟后过期
 - 执行前重新校验源端清单摘要和目标端当前修订
-- 修改远端前强制创建服务端立即快照，不能只依赖 10 秒延迟历史
+- 修改远端前强制下载并验证将被覆盖或删除的远端原像，不能只依赖延迟历史
 - 修改本地前强制保存将被覆盖或删除的本地原像
-- 顺序必须是“写入临时内容 -> 校验哈希 -> 原子替换 -> 最后创建删除墓碑”
+- 顺序必须是“保存目标原像 -> 校验计划修订 -> 按依赖顺序写入或删除 -> 重新读取两端清单并校验哈希”
 - 支持中断、重试、幂等和失败恢复
 - 完成后生成事务报告，并支持按事务回滚
 
@@ -303,7 +311,7 @@ MutationResult:
 
 - 任何手动镜像都必须确认
 - 删除数量达到 50 个或达到选定范围 10% 时，进入高风险确认
-- 高风险确认必须显示新增、覆盖、删除总数，并要求输入 Vault 名称
+- 高风险确认必须显示新增、覆盖、删除总数，并要求输入本地化确认词（简体中文为“确认覆盖”）
 - 自动模式命中高风险阈值时只能暂停，不能自动放行
 - 阈值应可配置，但不得允许完全关闭事务快照和修订校验
 
@@ -579,7 +587,7 @@ type MirrorDirection = "local-to-remote" | "remote-to-local";
 ### 需求追踪规则
 
 - 每个新增测试名称或测试注释至少引用一个 `REQ-*` 编号
-- 每个 PR 描述列出本次实现和暂未实现的 `REQ-*` 编号
+- 每个自维护版本的设计、review 或发布记录列出本次实现和暂未实现的 `REQ-*` 编号
 - 协议字段、数据库迁移、客户端状态和 UI 验收必须能追溯到同一需求编号
 - 某项需求只有在插件端、服务端和对应测试全部完成后才能标记为已交付
 
@@ -628,9 +636,9 @@ pnpm test:mirror
 pnpm test:vault-name
 ```
 
-## 十四、实施顺序与 PR 边界
+## 十四、实施顺序与自维护版本边界
 
-不得把全部能力放入一个 PR。
+当前两个 fork 由 `ZC-eto` 直接维护，不再向上游提交 PR。跨仓库协议仍按同一功能版本协同提交、测试和发布。
 
 ### 第一阶段：修订协议与删除安全
 
@@ -716,9 +724,9 @@ pnpm test:vault-name
 - 服务端已提供默认只读的 `safe-sync-import` 命令；只有显式传入 `--apply` 才会写 PostgreSQL，并在同一事务完成目标校验与 `VERIFIED` 记录。
 - Dokploy 源码构建入口为 `docker/Dockerfile.dokploy`；生产连接可用 `FNS_USER_DATABASE_*` 环境变量覆盖，不需要把密码提交到仓库。
 - 插件 `pnpm test`：通过，包含原有测试和安全同步 protobuf、状态、引擎、入站及传输测试。
-- 插件 `pnpm lint`：通过，0 error；`safe_sync_websocket_transport.ts` 仍有 4 条 `globalThis` warning。
+- 插件 `pnpm lint`：通过，0 warning、0 error；`pnpm lint:css` 通过。
 - 插件 `pnpm build`：通过。
-- 当前本机 Node 为 `v22.20.0`，低于项目声明的 `>=24.14.0`，pnpm 命令会显示 engine warning；发布环境应使用满足声明的 Node 版本再次构建。
+- 当前复验使用 Node `v24.14.0` 与 pnpm `11.1.2`，满足项目声明的运行版本。
 
 Dokploy 公用 PostgreSQL 导入、重复导入校验、服务健康、回滚点和 Windows 插件加载证据已于 2026-08-07 补齐，详见上方“自用部署记录”。Android 加载、跨设备 smoke 和首次安全同步 bootstrap 尚未执行，因此不能据此声称 Android 或安全同步端到端验收已完成。
 
@@ -738,13 +746,13 @@ fast-note-sync-service safe-sync-import --config config/config.yaml --apply
 
 可用 `--uid 1,2` 限定用户，或用 `--source-path` 指定旧 SQLite 主文件基准路径。任一表的源/目标计数、最大主键或关键字段摘要不一致时，整个用户导入事务回滚，不写 `VERIFIED`，也不得切换生产服务。
 
-## 十七、待确认决策
+## 十七、已确认决策
 
-以下是推荐默认值，需要用户或维护者确认后才能进入实现：
+以下默认值已用于当前实现：
 
 - 日常默认策略：双向修订同步，不使用最新 `mtime` 强制覆盖
-- 当前 Windows：先保持双向可写；完成第二阶段后可执行一次本地覆盖远端
-- 当前 Android：完成第三阶段后设为远端镜像端；需要编辑时切换为双向可写
+- 当前 Windows：默认保持双向可写；整理远端前可手动执行一次“本地覆盖远端”
+- 当前 Android：后续手工导入时建议设为远端镜像端；需要编辑时再切换为双向端
 - 手动镜像计划有效期：10 分钟
 - 高风险删除阈值：50 个或选定范围的 10%
 - 镜像事务快照和本地恢复包默认保留：30 天

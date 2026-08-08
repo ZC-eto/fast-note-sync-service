@@ -122,6 +122,23 @@ func (h *SafeSyncWSHandler) Events(c *pkgapp.WebsocketClient, msg *pkgapp.WebSoc
 	c.ToResponse(code.Success.WithData(result).WithVault(params.Vault).WithContext(params.Context), SafeSyncEventsAck)
 }
 
+func (h *SafeSyncWSHandler) DeviceRoleRegister(c *pkgapp.WebsocketClient, msg *pkgapp.WebSocketMessage) {
+	params := &dto.DeviceRoleRegisterRequest{}
+	if !h.bindSafeSyncRequest(c, msg, params) {
+		return
+	}
+	vaultID, ok := h.resolveSafeSyncVaultID(c, msg, params.Vault, params.Context)
+	if !ok {
+		return
+	}
+	result, err := h.App.SafeSyncService.RegisterDeviceRole(c.Context(), c.User.UID, vaultID, params.DeviceID, domain.DeviceSyncRole(params.Role))
+	if err != nil {
+		h.respondSafeSyncError(c, msg, err, nil, params.Vault, params.Context, "websocket_router.safe_sync.DeviceRoleRegister")
+		return
+	}
+	c.ToResponse(code.Success.WithData(result).WithVault(params.Vault).WithContext(params.Context), SafeSyncDeviceRoleStatusAck)
+}
+
 func (h *SafeSyncWSHandler) NoteMutation(c *pkgapp.WebsocketClient, msg *pkgapp.WebSocketMessage) {
 	h.mutate(c, msg, domain.SyncResourceTypeNote, SafeSyncNoteMutationAck)
 }
@@ -308,6 +325,10 @@ func safeSyncCode(errorCode domain.SafeSyncErrorCode) *code.Code {
 		return code.ErrorSafeSyncRebootstrap
 	case domain.SafeSyncErrorBootstrapStateConflict:
 		return code.ErrorSafeSyncBootstrapConflict
+	case domain.SafeSyncErrorDeviceRoleConflict:
+		return code.ErrorSafeSyncDeviceRoleConflict
+	case domain.SafeSyncErrorDeviceReadOnly:
+		return code.ErrorSafeSyncDeviceReadOnly
 	default:
 		return code.ErrorServerInternal
 	}
@@ -337,6 +358,8 @@ func safeSyncResponseAction(requestAction string) WebSocketSendAction {
 		return SafeSyncFileUploadStartAck
 	case SafeSyncReceiveFileUploadCommit:
 		return SafeSyncFileUploadCommitAck
+	case SafeSyncReceiveDeviceRoleRegister:
+		return SafeSyncDeviceRoleStatusAck
 	default:
 		return ""
 	}

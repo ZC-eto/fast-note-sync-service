@@ -6,7 +6,7 @@ IFS=$'\n\t'
 # Fast-Note Sync Service 管理脚本 (Premium)
 # ===========================================
 
-REPO="haierkeys/fast-note-sync-service"
+REPO="ZC-eto/fast-note-sync-service"
 BIN_BASE="fast-note-sync-service"
 INSTALL_DIR="/opt/fast-note"
 BIN_PATH="$INSTALL_DIR/$BIN_BASE"
@@ -18,10 +18,7 @@ LOG_FILE="/var/log/fast-note.log"
 TMPDIR="${TMPDIR:-/tmp}"
 GITHUB_RAW="https://github.com/$REPO/releases/download"
 GITHUB_API="https://api.github.com/repos/$REPO"
-CNB_API_BASE="https://api.cnb.cool/$REPO/-/releases"
-CNB_TOKEN="58tjez3744HL9Z10cRaCHdeEPhK"
-GITHUB_SCRIPT_URL="https://raw.githubusercontent.com/haierkeys/fast-note-sync-service/master/scripts/quest_install.sh"
-CNB_SCRIPT_URL="https://cnb.cool/haierkeys/fast-note-sync-service/-/git/raw/master/scripts/quest_install.sh?cnb"
+GITHUB_SCRIPT_URL="https://raw.githubusercontent.com/ZC-eto/fast-note-sync-service/master/scripts/quest_install.sh"
 CNB_MIRROR_CONF="$HOME/.fast-note-mirror"
 USE_CNB=false
 SUDO=""
@@ -55,10 +52,6 @@ draw_banner() {
     fi
     
     local source_display="${_BLUE}GitHub${_RESET}"
-    if [ "$USE_CNB" = "true" ]; then
-        source_display="${_MAGENTA}CNB.cool${_RESET}"
-    fi
-    
     local svc_file="N/A"
     local os_type
     os_type=$(detect_os)
@@ -146,8 +139,8 @@ load_lang() {
         L_MENU_6_D="将管理工具添加到全局快捷命令 fns"
         L_MENU_7="设置开机启动"
         L_MENU_7_D="配置 Systemd (Linux) 或 Launchd (macOS) 开机自启"
-        L_MENU_8="切换下载镜像"
-        L_MENU_8_D="在 GitHub 与 CNB 镜像之间切换"
+        L_MENU_8="当前下载源"
+        L_MENU_8_D="固定使用 ZC-eto GitHub 发布页"
         L_MENU_0="退出"
         L_MENU_L="Switch to English (切换至英文)"
         L_SWITCH_TO_CNB="已切换至 CNB 镜像"
@@ -231,8 +224,8 @@ load_lang() {
         L_MENU_6_D="Add this tool to global commands (fns)"
         L_MENU_7="Set Auto-Start"
         L_MENU_7_D="Configure Systemd (Linux) or Launchd (macOS) auto-start"
-        L_MENU_8="Switch Download Mirror"
-        L_MENU_8_D="Switch between GitHub and CNB mirror"
+        L_MENU_8="Current Download Source"
+        L_MENU_8_D="Pinned to the ZC-eto GitHub releases"
         L_MENU_0="Quit"
         L_MENU_L="切换至中文 (Switch to Chinese)"
         L_SWITCH_TO_CNB="Switched to CNB mirror"
@@ -309,32 +302,15 @@ load_lang "init"
 # Detect mirror source from script arguments or saved config
 # 从脚本参数或已保存配置中检测镜像来源
 save_mirror() {
-    echo "$USE_CNB" > "$CNB_MIRROR_CONF" 2>/dev/null || true
+    USE_CNB=false
+    echo "false" > "$CNB_MIRROR_CONF" 2>/dev/null || true
 }
 
 load_mirror() {
-    if [ -f "$CNB_MIRROR_CONF" ]; then
-        local saved
-        saved=$(cat "$CNB_MIRROR_CONF" 2>/dev/null | tr -d '[:space:]' || echo "false")
-        if [ "$saved" = "true" ]; then
-            USE_CNB=true
-        else
-            USE_CNB=false
-        fi
-    fi
+    USE_CNB=false
 }
 
 parse_mirror_from_args() {
-    # Check if any argument contains '?cnb' or '--cnb' flag
-    # 检查是否含有 ?cnb 或 --cnb 参数
-    for arg in "$@"; do
-        if [[ "$arg" == *"?cnb"* ]] || [[ "$arg" == "--cnb" ]]; then
-            USE_CNB=true
-            return
-        fi
-    done
-    # No cnb flag found; load from saved config
-    # 未找到 cnb 标志，从已保存配置加载
     load_mirror
 }
 parse_mirror_from_args "$@"
@@ -403,15 +379,6 @@ _arch_map() {
 # try get latest tag from GitHub API; fallback to "latest" string
 # 尝试从 GitHub API 获取最新 tag；失败则回退到 "latest" 字符串
 get_latest_tag() {
-    if [ "$USE_CNB" = "true" ]; then
-        local latest
-        # CNB releases API returns a list; we only need the first object's tag_name
-        # CNB releases API 返回一个列表；我们只需要第一个对象的 tag_name
-        latest=$(curl -fsSL -H "Accept: application/vnd.cnb.api+json" -H "Authorization: Bearer $CNB_TOKEN" "$CNB_API_BASE" | \
-        grep -oE '"tag_name"[[:space:]]*:[[:space:]]*"[^"]+"' | head -n1 | sed -E 's/.*"([^"]+)"$/\1/' || true)
-        if [ -n "$latest" ]; then echo "$latest"; return 0; fi
-    fi
-    
     if command -v curl >/dev/null 2>&1; then
         local latest
         latest="$(curl -fsSL "$GITHUB_API/releases/latest" 2>/dev/null | sed -nE 's/.*"tag_name"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' || true)"
@@ -440,30 +407,6 @@ download_release_asset() {
     local asset_name
     asset_name="$(asset_name_for "$ver" "$os" "$arch")"
     local out="$TMPDIR/$asset_name"
-    
-    if [ "$USE_CNB" = "true" ]; then
-        # Resolve "latest" tag via CNB API if needed
-        # 如需要，通过 CNB API 解析 "latest" tag
-        local cnb_tag="$ver"
-        if [ "$cnb_tag" = "latest" ]; then
-            local api_tag
-            # Get the first occurrence of tag_name from the top of the list
-            # 从列表顶部获取第一个 tag_name 的出现
-            api_tag=$(curl -fsSL -H "Accept: application/vnd.cnb.api+json" -H "Authorization: Bearer $CNB_TOKEN" "$CNB_API_BASE" | \
-            grep -oE '"tag_name"[[:space:]]*:[[:space:]]*"[^"]+"' | head -n1 | sed -E 's/.*"([^"]+)"$/\1/' || true)
-            [ -n "$api_tag" ] && cnb_tag="$api_tag"
-        fi
-        
-        # Construct CNB download URL directly: https://cnb.cool/{repo}/-/releases/download/{tag}/{filename}
-        # 直接构造 CNB 下载 URL，无需解析 API JSON
-        local cnb_url="https://cnb.cool/$REPO/-/releases/download/${cnb_tag}/${asset_name}"
-        info "$L_TRY_DL (CNB): ${_BOLD}$cnb_url${_RESET}" >&2
-        if curl -fSL -o "$out" "$cnb_url"; then
-            echo "$out"
-            return 0
-        fi
-        warn "$L_DL_FAIL_API" >&2
-    fi
     
     local url="$GITHUB_RAW/${clean_ver}/${asset_name}"
     
@@ -794,14 +737,8 @@ install_self() {
     ensure_root
     local src_url="${1:-}"
     
-    # Auto-select script URL based on current mirror setting
-    # 根据当前镜像设置自动选择脚本 URL
     if [ -z "$src_url" ]; then
-        if [ "$USE_CNB" = "true" ]; then
-            src_url="$CNB_SCRIPT_URL"
-        else
-            src_url="$GITHUB_SCRIPT_URL"
-        fi
+        src_url="$GITHUB_SCRIPT_URL"
     fi
     
     # 如果没有指定 URL 且当前不是通过本地文件运行（如 curl|bash 或 stdin）
@@ -826,19 +763,10 @@ install_self() {
     $SUDO chmod +x "$INSTALLER_SELF_PATH"
     $SUDO mkdir -p "$(dirname "$INSTALLER_LINK")"
     
-    # Create fns wrapper that passes mirror flag when USE_CNB=true
-    # 创建 fns 包装脚本，在 USE_CNB=true 时传递镜像参数
-    if [ "$USE_CNB" = "true" ]; then
-        cat <<'WRAPPER' | $SUDO tee "$INSTALLER_LINK" >/dev/null
-#!/usr/bin/env bash
-exec /opt/fast-note/fast-note-installer.sh --cnb "$@"
-WRAPPER
-    else
-        cat <<'WRAPPER' | $SUDO tee "$INSTALLER_LINK" >/dev/null
+    cat <<'WRAPPER' | $SUDO tee "$INSTALLER_LINK" >/dev/null
 #!/usr/bin/env bash
 exec /opt/fast-note/fast-note-installer.sh "$@"
 WRAPPER
-    fi
     $SUDO chmod +x "$INSTALLER_LINK"
     success "$L_INST_DONE: ${_BOLD}$INSTALLER_LINK${_RESET}"
 }
@@ -854,18 +782,9 @@ check_path() {
 }
 
 switch_mirror() {
-    if [ "$USE_CNB" = "true" ]; then
-        USE_CNB=false
-        save_mirror
-        success "$L_SWITCH_TO_GITHUB"
-    else
-        USE_CNB=true
-        save_mirror
-        success "$L_SWITCH_TO_CNB"
-    fi
-    # Re-install fns wrapper to reflect new mirror setting
-    # 重新安装 fns 包装脚本以反映新的镜像设置
-    install_self >/dev/null 2>&1 || true
+    USE_CNB=false
+    save_mirror
+    success "$L_SWITCH_TO_GITHUB"
 }
 
 show_menu() {

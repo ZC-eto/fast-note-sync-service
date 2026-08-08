@@ -11,7 +11,7 @@ const docTemplate = `{
         "title": "{{.Title}}",
         "contact": {
             "name": "Haierkeys",
-            "url": "https://github.com/haierkeys",
+            "url": "https://github.com/ZC-eto",
             "email": "haierkeys@gmail.com"
         },
         "license": {

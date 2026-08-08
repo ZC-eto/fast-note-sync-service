@@ -108,17 +108,18 @@ const (
 
 	// ---------------- Safe Revision Sync ----------------
 
-	SafeSyncReceiveStatus           WebSocketReceiveAction = "SafeSyncStatus"
-	SafeSyncReceiveBootstrapStart   WebSocketReceiveAction = "SafeSyncBootstrapStart"
-	SafeSyncReceiveBootstrapPage    WebSocketReceiveAction = "SafeSyncBootstrapPage"
-	SafeSyncReceiveBootstrapCommit  WebSocketReceiveAction = "SafeSyncBootstrapCommit"
-	SafeSyncReceiveBootstrapCancel  WebSocketReceiveAction = "SafeSyncBootstrapCancel"
-	SafeSyncReceiveEvents           WebSocketReceiveAction = "SafeSyncEvents"
-	SafeSyncReceiveNoteMutation     WebSocketReceiveAction = "SafeNoteMutation"
-	SafeSyncReceiveFolderMutation   WebSocketReceiveAction = "SafeFolderMutation"
-	SafeSyncReceiveFileMutation     WebSocketReceiveAction = "SafeFileMutation"
-	SafeSyncReceiveFileUploadStart  WebSocketReceiveAction = "SafeFileUploadStart"
-	SafeSyncReceiveFileUploadCommit WebSocketReceiveAction = "SafeFileUploadCommit"
+	SafeSyncReceiveStatus             WebSocketReceiveAction = "SafeSyncStatus"
+	SafeSyncReceiveBootstrapStart     WebSocketReceiveAction = "SafeSyncBootstrapStart"
+	SafeSyncReceiveBootstrapPage      WebSocketReceiveAction = "SafeSyncBootstrapPage"
+	SafeSyncReceiveBootstrapCommit    WebSocketReceiveAction = "SafeSyncBootstrapCommit"
+	SafeSyncReceiveBootstrapCancel    WebSocketReceiveAction = "SafeSyncBootstrapCancel"
+	SafeSyncReceiveEvents             WebSocketReceiveAction = "SafeSyncEvents"
+	SafeSyncReceiveNoteMutation       WebSocketReceiveAction = "SafeNoteMutation"
+	SafeSyncReceiveFolderMutation     WebSocketReceiveAction = "SafeFolderMutation"
+	SafeSyncReceiveFileMutation       WebSocketReceiveAction = "SafeFileMutation"
+	SafeSyncReceiveFileUploadStart    WebSocketReceiveAction = "SafeFileUploadStart"
+	SafeSyncReceiveFileUploadCommit   WebSocketReceiveAction = "SafeFileUploadCommit"
+	SafeSyncReceiveDeviceRoleRegister WebSocketReceiveAction = "DeviceRoleRegister"
 )
 
 const (
@@ -295,5 +296,6 @@ const (
 	SafeSyncFileMutationAck     WebSocketSendAction = "SafeFileMutationAck"
 	SafeSyncFileUploadStartAck  WebSocketSendAction = "SafeFileUploadStartAck"
 	SafeSyncFileUploadCommitAck WebSocketSendAction = "SafeFileUploadCommitAck"
+	SafeSyncDeviceRoleStatusAck WebSocketSendAction = "DeviceRoleStatus"
 	SafeSyncEvent               WebSocketSendAction = "SafeSyncEvent"
 )

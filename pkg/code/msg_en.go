@@ -139,4 +139,6 @@ var en_messages = map[int]string{
 	537: "The operation is outside the idempotency retention window",
 	538: "The event cursor is no longer available; bootstrap is required",
 	539: "The bootstrap session state has changed",
+	540: "Another device role or publisher lease conflicts with this request",
+	541: "This device is configured as a read-only remote mirror",
 }

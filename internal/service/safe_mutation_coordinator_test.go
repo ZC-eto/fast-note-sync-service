@@ -63,6 +63,7 @@ func TestSafeMutationCoordinator_NoteIdempotencyAndRevisionConflict(t *testing.T
 	reused := *create
 	reused.Content = "different"
 	reused.ContentHash = util.EncodeHash32(reused.Content)
+	reused.Size = int64(len([]byte(reused.Content)))
 	_, err = coordinator.Mutate(ctx, 1, 42, domain.SyncResourceTypeNote, &reused)
 	require.Equal(t, domain.SafeSyncErrorOperationIDReused, safeSyncErrorCode(err))
 
@@ -91,6 +92,63 @@ func TestSafeMutationCoordinator_NoteIdempotencyAndRevisionConflict(t *testing.T
 	require.NotEqual(t, "delete", note.Action)
 	require.NoError(t, db.Model(&model.SyncEvent{}).Count(&eventCount).Error)
 	require.Equal(t, int64(2), eventCount)
+}
+
+func TestSafeMutationCoordinator_RejectsInvalidNoteContentMetadata(t *testing.T) {
+	ctx := context.Background()
+	service, db := setupSafeSyncServiceTest(t, "postgres", true)
+	require.NoError(t, db.AutoMigrate(&model.Note{}))
+	require.NoError(t, db.Create(&model.VaultSyncState{VaultID: 49, State: "STRICT"}).Error)
+	coordinator := NewSafeMutationCoordinator(service.uow)
+
+	request := &dto.SafeMutationRequest{
+		DeviceID: "device-a", OperationID: "invalid-note", ExpectedPathState: "ABSENT", Action: "CREATE",
+		Path: "notes/invalid.md", PathHash: util.EncodeHash32("notes/invalid.md"), Content: "中文",
+		ContentHash: util.EncodeHash32("other"), Size: int64(len([]byte("中文"))), Ctime: 100, Mtime: 100,
+	}
+	_, err := coordinator.Mutate(ctx, 1, 49, domain.SyncResourceTypeNote, request)
+	require.Equal(t, domain.SafeSyncErrorPathStateConflict, safeSyncErrorCode(err))
+
+	request.OperationID = "invalid-note-size"
+	request.ContentHash = util.EncodeHash32(request.Content)
+	request.Size--
+	_, err = coordinator.Mutate(ctx, 1, 49, domain.SyncResourceTypeNote, request)
+	require.Equal(t, domain.SafeSyncErrorPathStateConflict, safeSyncErrorCode(err))
+
+	request.OperationID = "valid-unicode-note"
+	request.Size = int64(len([]byte(request.Content)))
+	_, err = coordinator.Mutate(ctx, 1, 49, domain.SyncResourceTypeNote, request)
+	require.NoError(t, err)
+}
+
+func TestSafeMutationCoordinator_EnforcesDeviceRoles(t *testing.T) {
+	ctx := context.Background()
+	service, db := setupSafeSyncServiceTest(t, "postgres", true)
+	require.NoError(t, db.AutoMigrate(&model.Note{}))
+	require.NoError(t, db.Create(&model.VaultSyncState{VaultID: 48, State: "STRICT"}).Error)
+	now := time.Now().UTC()
+	expires := now.Add(time.Minute)
+	require.NoError(t, db.Create(&[]model.DeviceSyncRole{
+		{VaultID: 48, DeviceID: "publisher-a", Role: string(domain.DeviceSyncRoleLocalPublisher), LeaseExpiresAt: &expires, LastSeenAt: now},
+		{VaultID: 48, DeviceID: "mirror-a", Role: string(domain.DeviceSyncRoleRemoteMirror), LastSeenAt: now},
+	}).Error)
+	coordinator := NewSafeMutationCoordinator(service.uow)
+	coordinator.now = func() time.Time { return now }
+
+	request := func(deviceID, operationID string) *dto.SafeMutationRequest {
+		return &dto.SafeMutationRequest{
+			DeviceID: deviceID, OperationID: operationID, ExpectedPathState: "ABSENT", Action: "CREATE",
+			Path: operationID + ".md", PathHash: util.EncodeHash32(operationID + ".md"), Content: "one",
+			ContentHash: util.EncodeHash32("one"), Size: 3, Ctime: 100, Mtime: 100,
+		}
+	}
+
+	_, err := coordinator.Mutate(ctx, 1, 48, domain.SyncResourceTypeNote, request("mirror-a", "mirror-write"))
+	require.Equal(t, domain.SafeSyncErrorDeviceReadOnly, safeSyncErrorCode(err))
+	_, err = coordinator.Mutate(ctx, 1, 48, domain.SyncResourceTypeNote, request("device-b", "blocked-write"))
+	require.Equal(t, domain.SafeSyncErrorDeviceRoleConflict, safeSyncErrorCode(err))
+	_, err = coordinator.Mutate(ctx, 1, 48, domain.SyncResourceTypeNote, request("publisher-a", "publisher-write"))
+	require.NoError(t, err)
 }
 
 func TestSafeMutationCoordinator_UsesRevisionInsteadOfClientClock(t *testing.T) {
@@ -123,6 +181,7 @@ func TestSafeMutationCoordinator_UsesRevisionInsteadOfClientClock(t *testing.T) 
 	staleFuture.OperationID = "op-clock-stale-future"
 	staleFuture.Content = "stale-future"
 	staleFuture.ContentHash = util.EncodeHash32(staleFuture.Content)
+	staleFuture.Size = int64(len([]byte(staleFuture.Content)))
 	staleFuture.Mtime = first.Mtime + 1_000_000_000
 	_, err = coordinator.Mutate(ctx, 1, 47, domain.SyncResourceTypeNote, &staleFuture)
 	require.Equal(t, domain.SafeSyncErrorRevisionConflict, safeSyncErrorCode(err))
@@ -134,6 +193,7 @@ func TestSafeMutationCoordinator_UsesRevisionInsteadOfClientClock(t *testing.T) 
 	currentOldClock.BaseHash = first.ContentHash
 	currentOldClock.Content = "current-old-clock"
 	currentOldClock.ContentHash = util.EncodeHash32(currentOldClock.Content)
+	currentOldClock.Size = int64(len([]byte(currentOldClock.Content)))
 	currentOldClock.Mtime = 1
 	currentResult, err := coordinator.Mutate(ctx, 1, 47, domain.SyncResourceTypeNote, &currentOldClock)
 	require.NoError(t, err)

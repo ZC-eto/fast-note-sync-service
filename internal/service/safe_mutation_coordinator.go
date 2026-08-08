@@ -72,6 +72,10 @@ func (c *SafeMutationCoordinator) Mutate(ctx context.Context, uid, vaultID int64
 			terminalErr = err
 			return nil
 		}
+		if err := enforceDeviceWriteRole(tx, vaultID, request.DeviceID, c.now()); err != nil {
+			terminalErr = err
+			return nil
+		}
 
 		existing, err := findSafeSyncOperation(tx, vaultID, request.DeviceID, request.OperationID)
 		if err != nil {
@@ -172,6 +176,10 @@ func (c *SafeMutationCoordinator) CommitFile(ctx context.Context, uid, vaultID i
 	var terminalErr error
 	err = c.uow.Transaction(ctx, uid, func(tx *gorm.DB) error {
 		if err := requireStrictVaultTransaction(tx, vaultID); err != nil {
+			terminalErr = err
+			return nil
+		}
+		if err := enforceDeviceWriteRole(tx, vaultID, request.DeviceID, c.now()); err != nil {
 			terminalErr = err
 			return nil
 		}
@@ -886,6 +894,15 @@ func validateSafeMutationRequest(resourceType domain.SyncResourceType, request *
 	}
 	if resourceType != domain.SyncResourceTypeNote && resourceType != domain.SyncResourceTypeFile && resourceType != domain.SyncResourceTypeFolder {
 		return errors.New("unsupported safe mutation resource type")
+	}
+	if resourceType == domain.SyncResourceTypeNote && (request.Action == "CREATE" || request.Action == "MODIFY") {
+		content := []byte(request.Content)
+		if int64(len(content)) != request.Size {
+			return newSafeSyncError(domain.SafeSyncErrorPathStateConflict, "note size does not match content")
+		}
+		if !matchesSafeContentHash(content, request.ContentHash) {
+			return newSafeSyncError(domain.SafeSyncErrorPathStateConflict, "note hash does not match content")
+		}
 	}
 	return nil
 }

@@ -17,7 +17,7 @@ var c string
 // @description This is the Fast Note Sync Service HTTP API.
 
 // @contact.name Haierkeys
-// @contact.url https://github.com/haierkeys
+// @contact.url https://github.com/ZC-eto
 // @contact.email haierkeys@gmail.com
 
 // @license.name Apache 2.0

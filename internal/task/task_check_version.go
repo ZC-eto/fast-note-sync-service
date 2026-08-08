@@ -16,19 +16,21 @@ import (
 )
 
 const (
-	GitHubServiceReleaseURL = "https://api.github.com/repos/haierkeys/fast-note-sync-service/releases"
-	GitHubPluginReleaseURL  = "https://api.github.com/repos/haierkeys/obsidian-fast-note-sync/releases"
-	ServiceRepoPath         = "haierkeys/fast-note-sync-service"
+	GitHubServiceReleaseURL = "https://api.github.com/repos/ZC-eto/fast-note-sync-service/releases"
+	GitHubPluginReleaseURL  = "https://api.github.com/repos/ZC-eto/obsidian-fast-note-sync/releases"
+	ServiceRepoPath         = "ZC-eto/fast-note-sync-service"
 	ServiceRepoURL          = "https://github.com/" + ServiceRepoPath
-	PluginRepoPath          = "haierkeys/obsidian-fast-note-sync"
+	PluginRepoPath          = "ZC-eto/obsidian-fast-note-sync"
 	PluginRepoURL           = "https://github.com/" + PluginRepoPath
 
-	CNBServiceReleaseURL = "https://api.cnb.cool/" + ServiceRepoPath + "/-/releases"
-	CNBPluginReleaseURL  = "https://api.cnb.cool/" + PluginRepoPath + "/-/releases"
-	CNBServiceURL        = "https://cnb.cool/" + ServiceRepoPath
-	CNBPluginURL         = "https://cnb.cool/" + PluginRepoPath
-	CNBServiceToken      = "58tjez3744HL9Z10cRaCHdeEPhK"
-	CNBPluginToken       = "9pFNKcjlej36e0w6MHKT6YMn53G"
+	// This fork publishes on GitHub only. Keep the legacy fallback parameters
+	// empty so older call paths fail closed instead of contacting upstream CNB.
+	CNBServiceReleaseURL = ""
+	CNBPluginReleaseURL  = ""
+	CNBServiceURL        = ServiceRepoURL
+	CNBPluginURL         = PluginRepoURL
+	CNBServiceToken      = ""
+	CNBPluginToken       = ""
 
 	// fetchHTTPTimeout bounds each release-list HTTP request so a hung source
 	// can't stall the whole task; the task-layer fallback then retries the other source.
@@ -246,7 +248,7 @@ func buildLinks(releases []pkgapp.HistoricalVersion, isService, fromGitHub bool)
 			base = PluginRepoURL
 		}
 		link = base + "/releases/tag/" + latestClean
-		changelogLink = base + "/releases/download/" + latestClean + "/changelog.txt"
+		changelogLink = link
 	} else {
 		base := CNBServiceURL
 		if !isService {

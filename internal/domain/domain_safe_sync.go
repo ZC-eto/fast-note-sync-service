@@ -14,6 +14,8 @@ const (
 	SafeSyncErrorOperationExpired       SafeSyncErrorCode = "OPERATION_EXPIRED"
 	SafeSyncErrorRebootstrapRequired    SafeSyncErrorCode = "REBOOTSTRAP_REQUIRED"
 	SafeSyncErrorBootstrapStateConflict SafeSyncErrorCode = "BOOTSTRAP_STATE_CONFLICT"
+	SafeSyncErrorDeviceRoleConflict     SafeSyncErrorCode = "DEVICE_ROLE_CONFLICT"
+	SafeSyncErrorDeviceReadOnly         SafeSyncErrorCode = "DEVICE_READ_ONLY"
 )
 
 type SafeSyncError struct {
@@ -67,6 +69,14 @@ const (
 	SyncOperationStatePrepared  SyncOperationState = "PREPARED"
 	SyncOperationStateCommitted SyncOperationState = "COMMITTED"
 	SyncOperationStateRejected  SyncOperationState = "REJECTED"
+)
+
+type DeviceSyncRole string
+
+const (
+	DeviceSyncRoleBidirectional  DeviceSyncRole = "BIDIRECTIONAL"
+	DeviceSyncRoleLocalPublisher DeviceSyncRole = "LOCAL_PUBLISHER"
+	DeviceSyncRoleRemoteMirror   DeviceSyncRole = "REMOTE_MIRROR"
 )
 
 type MutationPrecondition struct {

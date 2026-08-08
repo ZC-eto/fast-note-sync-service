@@ -79,6 +79,60 @@ func TestSafeSyncService_StatusRequiresPostgresAndVerifiedImport(t *testing.T) {
 	require.Equal(t, int64(7), status.VaultID)
 }
 
+func TestSafeSyncService_DeviceRolesAndPublisherLease(t *testing.T) {
+	ctx := context.Background()
+	service, db := setupSafeSyncServiceTest(t, "postgres", true)
+	now := time.Date(2026, 8, 8, 12, 0, 0, 0, time.UTC)
+	service.now = func() time.Time { return now }
+
+	publisher, err := service.RegisterDeviceRole(ctx, 1, 8, "publisher-a", domain.DeviceSyncRoleLocalPublisher)
+	require.NoError(t, err)
+	require.True(t, publisher.Writable)
+	require.Equal(t, "publisher-a", publisher.PublisherDeviceID)
+	require.Equal(t, now.Add(devicePublisherLeaseTTL).UnixMilli(), publisher.PublisherLeaseExpiresAt)
+
+	reader, err := service.RegisterDeviceRole(ctx, 1, 8, "reader-a", domain.DeviceSyncRoleRemoteMirror)
+	require.NoError(t, err)
+	require.False(t, reader.Writable)
+	require.Equal(t, "publisher-a", reader.PublisherDeviceID)
+
+	bidirectional, err := service.RegisterDeviceRole(ctx, 1, 8, "device-b", domain.DeviceSyncRoleBidirectional)
+	require.NoError(t, err)
+	require.False(t, bidirectional.Writable)
+
+	_, err = service.RegisterDeviceRole(ctx, 1, 8, "publisher-b", domain.DeviceSyncRoleLocalPublisher)
+	require.Equal(t, domain.SafeSyncErrorDeviceRoleConflict, safeSyncErrorCode(err))
+
+	now = now.Add(devicePublisherLeaseTTL + time.Second)
+	second, err := service.RegisterDeviceRole(ctx, 1, 8, "publisher-b", domain.DeviceSyncRoleLocalPublisher)
+	require.NoError(t, err)
+	require.True(t, second.Writable)
+	require.Equal(t, "publisher-b", second.PublisherDeviceID)
+
+	var roles []model.DeviceSyncRole
+	require.NoError(t, db.Where("vault_id = ?", 8).Order("device_id").Find(&roles).Error)
+	require.Len(t, roles, 4)
+}
+
+func TestSafeSyncService_ReleasesOwnPublisherLeaseWhenRoleChanges(t *testing.T) {
+	ctx := context.Background()
+	service, _ := setupSafeSyncServiceTest(t, "postgres", true)
+	service.now = func() time.Time { return time.Date(2026, 8, 8, 12, 0, 0, 0, time.UTC) }
+
+	_, err := service.RegisterDeviceRole(ctx, 1, 18, "publisher-a", domain.DeviceSyncRoleLocalPublisher)
+	require.NoError(t, err)
+	released, err := service.RegisterDeviceRole(ctx, 1, 18, "publisher-a", domain.DeviceSyncRoleBidirectional)
+	require.NoError(t, err)
+	require.True(t, released.Writable)
+	require.Empty(t, released.PublisherDeviceID)
+	require.Zero(t, released.PublisherLeaseExpiresAt)
+
+	second, err := service.RegisterDeviceRole(ctx, 1, 18, "publisher-b", domain.DeviceSyncRoleLocalPublisher)
+	require.NoError(t, err)
+	require.True(t, second.Writable)
+	require.Equal(t, "publisher-b", second.PublisherDeviceID)
+}
+
 func TestSafeSyncService_BootstrapPagesAndCommitsStrictWithoutDowngrade(t *testing.T) {
 	ctx := context.Background()
 	service, db := setupSafeSyncServiceTest(t, "postgres", true)

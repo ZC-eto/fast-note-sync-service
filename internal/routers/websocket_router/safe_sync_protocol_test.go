@@ -29,6 +29,16 @@ func TestSafeSyncProtobufRequests(t *testing.T) {
 			},
 		},
 		{
+			name: "device role", action: SafeSyncReceiveDeviceRoleRegister,
+			wire: &v1.DeviceRoleRegisterRequest{Vault: "vault-a", DeviceId: "device-a", Role: "LOCAL_PUBLISHER", Context: "ctx-a"}, dest: &dto.DeviceRoleRegisterRequest{},
+			assert: func(t *testing.T, dest any) {
+				got := dest.(*dto.DeviceRoleRegisterRequest)
+				require.Equal(t, "device-a", got.DeviceID)
+				require.Equal(t, "LOCAL_PUBLISHER", got.Role)
+				require.Equal(t, "ctx-a", got.Context)
+			},
+		},
+		{
 			name: "bootstrap start", action: SafeSyncReceiveBootstrapStart,
 			wire: &v1.SafeSyncBootstrapStartRequest{Vault: "vault-a", DeviceId: "device-a", Context: "ctx-a"}, dest: &dto.SafeSyncBootstrapStartRequest{},
 			assert: func(t *testing.T, dest any) {
@@ -141,6 +151,16 @@ func TestSafeSyncProtobufResponsesAndStructuredError(t *testing.T) {
 	require.Equal(t, int64(3), status.Uid)
 	require.Equal(t, int64(9), status.VaultId)
 
+	roleWire := decodeSafeSyncResponseData(t, SafeSyncDeviceRoleStatusAck, dto.DeviceRoleStatusResponse{
+		DeviceID: "device-a", Role: "LOCAL_PUBLISHER", PublisherDeviceID: "device-a",
+		PublisherLeaseExpiresAt: 1234, Writable: true,
+	})
+	var role v1.DeviceRoleStatusResponse
+	require.NoError(t, proto.Unmarshal(roleWire, &role))
+	require.Equal(t, "LOCAL_PUBLISHER", role.Role)
+	require.Equal(t, "device-a", role.PublisherDeviceId)
+	require.True(t, role.Writable)
+
 	startWire := decodeSafeSyncResponseData(t, SafeSyncBootstrapStartAck, dto.SafeSyncBootstrapStartResponse{
 		State: "BOOTSTRAPPING", SessionID: "session-a", ExpiresAt: 1000,
 		SnapshotVaultRevision: 21, ManifestHash: "manifest-a", ResourceCount: 1, Cursor: "cursor-a",
@@ -211,6 +231,8 @@ func TestSafeSyncErrorCodesAndRBAC(t *testing.T) {
 		{domain.SafeSyncErrorOperationExpired, 537},
 		{domain.SafeSyncErrorRebootstrapRequired, 538},
 		{domain.SafeSyncErrorBootstrapStateConflict, 539},
+		{domain.SafeSyncErrorDeviceRoleConflict, 540},
+		{domain.SafeSyncErrorDeviceReadOnly, 541},
 	}
 	for _, test := range tests {
 		err := &domain.SafeSyncError{Code: test.domainCode, Message: "test"}
@@ -227,7 +249,7 @@ func TestSafeSyncErrorCodesAndRBAC(t *testing.T) {
 	for _, action := range readActions {
 		require.Equal(t, []string{"note_r", "file_r"}, resolveRBACFunctions(action), action)
 	}
-	writeActions := []string{SafeSyncReceiveBootstrapStart, SafeSyncReceiveBootstrapCommit, SafeSyncReceiveBootstrapCancel, SafeSyncReceiveNoteMutation, SafeSyncReceiveFolderMutation}
+	writeActions := []string{SafeSyncReceiveBootstrapStart, SafeSyncReceiveBootstrapCommit, SafeSyncReceiveBootstrapCancel, SafeSyncReceiveDeviceRoleRegister, SafeSyncReceiveNoteMutation, SafeSyncReceiveFolderMutation}
 	for _, action := range writeActions {
 		want := []string{"note_w", "file_w"}
 		if action == SafeSyncReceiveNoteMutation || action == SafeSyncReceiveFolderMutation {

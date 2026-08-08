@@ -56,11 +56,9 @@ func (h *VersionHandler) ServerVersion(c *gin.Context) {
 	}))
 }
 
-// ProbeSources probes GitHub and CNB release endpoints in parallel and reports
-// reachability + latency for each, plus the recommended source. Used by the
-// webgui settings "test latency" panel.
+// ProbeSources reports the GitHub release endpoint used by this fork.
 // @Summary Probe version sources latency
-// @Description Parallel-probe GitHub and CNB release endpoints, return reachability, latency, recommended source and current selected mode
+// @Description Probe the fork GitHub release endpoint and report its latency
 // @Tags System
 // @Produce json
 // @Security UserAuthToken
@@ -69,10 +67,6 @@ func (h *VersionHandler) ServerVersion(c *gin.Context) {
 func (h *VersionHandler) ProbeSources(c *gin.Context) {
 	response := pkgapp.NewResponse(c)
 	snap := h.App.SourceSelector().Probe(c.Request.Context())
-	recommended := fileurl.SourceCNB
-	if snap.UseGitHub {
-		recommended = fileurl.SourceGitHub
-	}
 	response.ToResponse(code.Success.WithData(dto.SourceProbeDTO{
 		GitHub: dto.SourceProbeItem{
 			OK:        snap.GitHub.OK,
@@ -82,8 +76,8 @@ func (h *VersionHandler) ProbeSources(c *gin.Context) {
 			OK:        snap.CNB.OK,
 			LatencyMs: snap.CNB.LatencyMs,
 		},
-		Recommended:  recommended,
-		SelectedMode: h.App.SourceSelector().Mode(),
+		Recommended:  fileurl.SourceGitHub,
+		SelectedMode: fileurl.SourceGitHub,
 	}))
 }
 

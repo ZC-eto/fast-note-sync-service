@@ -13,6 +13,7 @@ const (
 	TableNameSyncPathTombstone      = "sync_path_tombstone"
 	TableNameSyncEvent              = "sync_event"
 	TableNameSyncOperation          = "sync_operation"
+	TableNameDeviceSyncRole         = "device_sync_role"
 	SafeSyncOperationRetention      = 30 * 24 * time.Hour
 )
 
@@ -122,6 +123,19 @@ type SyncOperation struct {
 	UpdatedAt          time.Time `gorm:"column:updated_at;not null;autoUpdateTime"`
 }
 
+type DeviceSyncRole struct {
+	ID             int64      `gorm:"column:id;primaryKey;autoIncrement"`
+	VaultID        int64      `gorm:"column:vault_id;not null;uniqueIndex:idx_device_sync_role_identity,priority:1;index"`
+	DeviceID       string     `gorm:"column:device_id;type:varchar(128);not null;uniqueIndex:idx_device_sync_role_identity,priority:2"`
+	Role           string     `gorm:"column:role;type:varchar(32);not null;default:'BIDIRECTIONAL';index"`
+	LeaseExpiresAt *time.Time `gorm:"column:lease_expires_at;index"`
+	LastSeenAt     time.Time  `gorm:"column:last_seen_at;not null"`
+	CreatedAt      time.Time  `gorm:"column:created_at;not null;autoCreateTime"`
+	UpdatedAt      time.Time  `gorm:"column:updated_at;not null;autoUpdateTime"`
+}
+
+func (*DeviceSyncRole) TableName() string { return TableNameDeviceSyncRole }
+
 func (*SyncOperation) TableName() string { return TableNameSyncOperation }
 
 func (o *SyncOperation) BeforeCreate(*gorm.DB) error {
@@ -139,5 +153,6 @@ func AutoMigrateSafeSync(db *gorm.DB) error {
 		&SyncPathTombstone{},
 		&SyncEvent{},
 		&SyncOperation{},
+		&DeviceSyncRole{},
 	)
 }

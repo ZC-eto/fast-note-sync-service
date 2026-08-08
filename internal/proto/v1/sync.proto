@@ -664,6 +664,21 @@ message SafeSyncStatusResponse {
     int64 vaultId = 8;
 }
 
+message DeviceRoleRegisterRequest {
+    string vault = 1;
+    string deviceId = 2;
+    string role = 3;
+    string context = 4;
+}
+
+message DeviceRoleStatusResponse {
+    string deviceId = 1;
+    string role = 2;
+    string publisherDeviceId = 3;
+    int64 publisherLeaseExpiresAt = 4;
+    bool writable = 5;
+}
+
 message SafeSyncBootstrapStartRequest {
     string vault = 1;
     string deviceId = 2;

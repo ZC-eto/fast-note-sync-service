@@ -73,6 +73,7 @@ func initWebSocketRoutes(wss *pkgapp.WebsocketServer, appContainer *app.App) {
 	wss.Use(websocket_router.SafeSyncReceiveFileMutation, safeSyncWSHandler.FileMutation)
 	wss.Use(websocket_router.SafeSyncReceiveFileUploadStart, safeSyncWSHandler.FileUploadStart)
 	wss.Use(websocket_router.SafeSyncReceiveFileUploadCommit, safeSyncWSHandler.FileUploadCommit)
+	wss.Use(websocket_router.SafeSyncReceiveDeviceRoleRegister, safeSyncWSHandler.DeviceRoleRegister)
 
 	// Inject Message Interceptor to handle unauthenticated checks, Vault restrictions, RBAC checks, and error rollbacks
 	// 注入消息拦截器，处理未登录验证、Vault笔记库限制校验、RBAC权限检查以及写失败回滚机制

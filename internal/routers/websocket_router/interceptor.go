@@ -99,7 +99,7 @@ func resolveRBACFunctions(msgType string) []string {
 	switch msgType {
 	case SafeSyncReceiveStatus, SafeSyncReceiveBootstrapPage, SafeSyncReceiveEvents:
 		return []string{"note_r", "file_r"}
-	case SafeSyncReceiveBootstrapStart, SafeSyncReceiveBootstrapCommit, SafeSyncReceiveBootstrapCancel:
+	case SafeSyncReceiveBootstrapStart, SafeSyncReceiveBootstrapCommit, SafeSyncReceiveBootstrapCancel, SafeSyncReceiveDeviceRoleRegister:
 		return []string{"note_w", "file_w"}
 	case SafeSyncReceiveNoteMutation, SafeSyncReceiveFolderMutation:
 		return []string{"note_w"}

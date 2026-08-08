@@ -153,7 +153,7 @@ func (h *MCPHandler) HandleSSE(c *gin.Context) {
 	// Build absolute URL from the incoming request to fix MCP clients
 	// (e.g., Hermes/Anthropic Python SDK) that cannot resolve relative
 	// endpoint paths returned by mark3labs/mcp-go SSEServer.
-	// See: https://github.com/haierkeys/fast-note-sync-service/issues/258
+	// See upstream issue 258 for the original compatibility discussion.
 	// Priority 1: use the configured ExtApiUrl so that reverse-proxy deployments
 	// return the correct public URL instead of the internal host/port.
 	// Priority 2: fall back to reconstructing from the request (scheme + Host header).

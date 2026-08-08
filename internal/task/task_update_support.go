@@ -14,8 +14,8 @@ import (
 )
 
 const (
-	SupportGitHubRawURL = "https://raw.githubusercontent.com/haierkeys/fast-note-sync-service/refs/heads/master/docs/Support.%s.json"
-	SupportCNBRawURL    = "https://cnb.cool/haierkeys/fast-note-sync-service/-/git/raw/master/docs/Support.%s.json"
+	SupportGitHubRawURL = "https://raw.githubusercontent.com/ZC-eto/fast-note-sync-service/refs/heads/master/docs/Support.%s.json"
+	SupportCNBRawURL    = SupportGitHubRawURL
 )
 
 type UpdateSupportTask struct {
