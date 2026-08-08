@@ -116,6 +116,102 @@ func (u *SafeSyncUnitOfWork) BackfillResourceMetadata(ctx context.Context, uid i
 	})
 }
 
+// ReconcileLegacyResourceMetadata refreshes the safe-sync baseline from the
+// legacy tables after the Vault has been frozen in BOOTSTRAPPING state.
+func (u *SafeSyncUnitOfWork) ReconcileLegacyResourceMetadata(tx *gorm.DB, vaultID int64) error {
+	if tx == nil {
+		return errors.New("safe sync transaction is nil")
+	}
+	if err := tx.Model(&model.SyncResourceMetadata{}).
+		Where("vault_id = ?", vaultID).
+		Update("state", "DELETED").Error; err != nil {
+		return err
+	}
+	if err := reconcileLegacyNotes(tx, vaultID); err != nil {
+		return err
+	}
+	if err := reconcileLegacyFiles(tx, vaultID); err != nil {
+		return err
+	}
+	return reconcileLegacyFolders(tx, vaultID)
+}
+
+func reconcileLegacyNotes(tx *gorm.DB, vaultID int64) error {
+	if !tx.Migrator().HasTable(&model.Note{}) {
+		return nil
+	}
+	var notes []model.Note
+	if err := tx.Select("id", "vault_id", "action", "path", "path_hash", "content_hash", "size").
+		Where("vault_id = ?", vaultID).Find(&notes).Error; err != nil {
+		return err
+	}
+	for _, note := range notes {
+		if err := reconcileLegacyResource(tx, "NOTE", note.ID, note.VaultID, note.Action, note.Path, note.PathHash, note.ContentHash, note.Size); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func reconcileLegacyFiles(tx *gorm.DB, vaultID int64) error {
+	if !tx.Migrator().HasTable(&model.File{}) {
+		return nil
+	}
+	var files []model.File
+	if err := tx.Select("id", "vault_id", "action", "path", "path_hash", "content_hash", "size").
+		Where("vault_id = ?", vaultID).Find(&files).Error; err != nil {
+		return err
+	}
+	for _, file := range files {
+		if err := reconcileLegacyResource(tx, "FILE", file.ID, file.VaultID, file.Action, file.Path, file.PathHash, file.ContentHash, file.Size); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func reconcileLegacyFolders(tx *gorm.DB, vaultID int64) error {
+	if !tx.Migrator().HasTable(&model.Folder{}) {
+		return nil
+	}
+	var folders []model.Folder
+	if err := tx.Select("id", "vault_id", "action", "path", "path_hash").
+		Where("vault_id = ?", vaultID).Find(&folders).Error; err != nil {
+		return err
+	}
+	for _, folder := range folders {
+		if err := reconcileLegacyResource(tx, "FOLDER", folder.ID, folder.VaultID, folder.Action, folder.Path, folder.PathHash, "", 0); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func reconcileLegacyResource(tx *gorm.DB, resourceType string, legacyID, vaultID int64, action, path, pathHash, contentHash string, size int64) error {
+	state := "LIVE"
+	if action == "delete" {
+		state = "DELETED"
+	}
+	updates := map[string]any{
+		"vault_id": vaultID, "current_path": path, "current_path_hash": pathHash,
+		"content_hash": contentHash, "state": state, "size": size,
+	}
+	result := tx.Model(&model.SyncResourceMetadata{}).
+		Where("resource_type = ? AND legacy_id = ?", resourceType, legacyID).
+		Updates(updates)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected > 0 {
+		return nil
+	}
+	return tx.Create(&model.SyncResourceMetadata{
+		ResourceID: uuid.NewString(), VaultID: vaultID, ResourceType: resourceType, LegacyID: legacyID,
+		ResourceRevision: 1, CurrentPath: path, CurrentPathHash: pathHash,
+		ContentHash: contentHash, State: state, Size: size,
+	}).Error
+}
+
 func backfillResourceMetadata(tx *gorm.DB, verifiedAt *time.Time) error {
 	vaultIDs := make(map[int64]struct{})
 	if tx.Migrator().HasTable(&model.Vault{}) {

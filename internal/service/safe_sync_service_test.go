@@ -178,6 +178,53 @@ func TestSafeSyncService_BootstrapPagesAndCommitsStrictWithoutDowngrade(t *testi
 	require.Equal(t, string(domain.VaultSyncStateStrict), status.State)
 }
 
+func TestSafeSyncService_BootstrapReconcilesLegacyContentBeforeBuildingManifest(t *testing.T) {
+	ctx := context.Background()
+	service, db := setupSafeSyncServiceTest(t, "postgres", true)
+	require.NoError(t, db.AutoMigrate(&model.Note{}, &model.File{}, &model.Folder{}))
+	require.NoError(t, db.Create(&model.Note{
+		ID: 21, VaultID: 19, Action: "modify", Path: "changed.md", PathHash: "path-current",
+		Content: "current", ContentHash: "hash-current", Size: 7,
+	}).Error)
+	require.NoError(t, db.Create(&model.SyncResourceMetadata{
+		ResourceID: "stale-note", VaultID: 19, ResourceType: "NOTE", LegacyID: 21,
+		ResourceRevision: 1, CurrentPath: "changed.md", CurrentPathHash: "path-stale",
+		ContentHash: "hash-stale", State: "LIVE", Size: 5,
+	}).Error)
+
+	started, err := service.BootstrapStart(ctx, 1, 19, "device-a")
+	require.NoError(t, err)
+	page, err := service.BootstrapPage(ctx, 1, 19, started.SessionID, started.Cursor, 20)
+	require.NoError(t, err)
+	require.Len(t, page.Items, 1)
+	require.Equal(t, "path-current", page.Items[0].PathHash)
+	require.Equal(t, "hash-current", page.Items[0].ContentHash)
+	require.Equal(t, int64(7), page.Items[0].Size)
+}
+
+func TestSafeSyncService_BootstrapRejectsLegacyChangeBeforeCommit(t *testing.T) {
+	ctx := context.Background()
+	service, db := setupSafeSyncServiceTest(t, "postgres", true)
+	require.NoError(t, db.AutoMigrate(&model.Note{}, &model.File{}, &model.Folder{}))
+	note := model.Note{
+		ID: 22, VaultID: 20, Action: "modify", Path: "changed.md", PathHash: "path-current",
+		Content: "before", ContentHash: "hash-before", Size: 6,
+	}
+	require.NoError(t, db.Create(&note).Error)
+
+	started, err := service.BootstrapStart(ctx, 1, 20, "device-a")
+	require.NoError(t, err)
+	require.NoError(t, db.Model(&model.Note{}).Where("id = ?", note.ID).
+		Updates(map[string]any{"content": "after", "content_hash": "hash-after", "size": 5}).Error)
+
+	_, err = service.BootstrapCommit(ctx, 1, 20, started.SessionID, started.ManifestHash, started.SnapshotVaultRevision)
+	require.Equal(t, domain.SafeSyncErrorBootstrapStateConflict, safeSyncErrorCode(err))
+
+	var state model.VaultSyncState
+	require.NoError(t, db.Where("vault_id = ?", 20).Take(&state).Error)
+	require.Equal(t, string(domain.VaultSyncStateBootstrapping), state.State)
+}
+
 func TestSafeSyncService_EventsRequireAvailableCursor(t *testing.T) {
 	ctx := context.Background()
 	service, db := setupSafeSyncServiceTest(t, "postgres", true)

@@ -137,6 +137,11 @@ func (s *safeSyncService) BootstrapStart(ctx context.Context, uid, vaultID int64
 		if err := tx.Where("vault_id = ?", vaultID).Take(current).Error; err != nil {
 			return err
 		}
+		if previousState == string(domain.VaultSyncStateOff) {
+			if err := s.uow.ReconcileLegacyResourceMetadata(tx, vaultID); err != nil {
+				return err
+			}
+		}
 		createdSession = true
 		state = *current
 		return nil
@@ -266,6 +271,18 @@ func (s *safeSyncService) BootstrapCommit(ctx context.Context, uid, vaultID int6
 			state.BootstrapManifestHash == "" || state.BootstrapManifestHash != manifestHash || state.BootstrapSnapshotRevision != snapshotRevision {
 			return newSafeSyncError(domain.SafeSyncErrorBootstrapStateConflict, "bootstrap commit compare-and-swap failed")
 		}
+		if state.BootstrapPreviousState == string(domain.VaultSyncStateOff) {
+			if err := s.uow.ReconcileLegacyResourceMetadata(tx, vaultID); err != nil {
+				return err
+			}
+			currentManifestHash, _, err := bootstrapManifestTx(tx, vaultID)
+			if err != nil {
+				return err
+			}
+			if currentManifestHash != state.BootstrapManifestHash {
+				return newSafeSyncError(domain.SafeSyncErrorBootstrapStateConflict, "legacy content changed during bootstrap")
+			}
+		}
 		updates := clearedBootstrapUpdates(string(domain.VaultSyncStateStrict))
 		updates["activated_at"] = now
 		if err := tx.Model(&model.VaultSyncState{}).Where("vault_id = ? AND bootstrap_session_id = ?", vaultID, sessionID).Updates(updates).Error; err != nil {
@@ -370,11 +387,22 @@ func (s *safeSyncService) requireCapability(ctx context.Context, uid int64) erro
 }
 
 func (s *safeSyncService) bootstrapManifest(ctx context.Context, uid, vaultID int64) (string, int64, error) {
-	var resources []model.SyncResourceMetadata
+	var manifestHash string
+	var resourceCount int64
 	err := s.uow.Transaction(ctx, uid, func(tx *gorm.DB) error {
-		return tx.Where("vault_id = ?", vaultID).Order("resource_id").Find(&resources).Error
+		var err error
+		manifestHash, resourceCount, err = bootstrapManifestTx(tx, vaultID)
+		return err
 	})
 	if err != nil {
+		return "", 0, err
+	}
+	return manifestHash, resourceCount, nil
+}
+
+func bootstrapManifestTx(tx *gorm.DB, vaultID int64) (string, int64, error) {
+	var resources []model.SyncResourceMetadata
+	if err := tx.Where("vault_id = ?", vaultID).Order("resource_id").Find(&resources).Error; err != nil {
 		return "", 0, err
 	}
 	hash := sha256.New()
