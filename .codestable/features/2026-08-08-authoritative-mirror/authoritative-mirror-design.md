@@ -5,6 +5,10 @@ date: 2026-08-08
 status: approved
 execution_lane: standard
 approval_ref: user-confirmed-2026-08-08
+summary: 为安全多端同步增加双向权威覆盖、目标端恢复、设备角色和 fork 自维护发布链路
+tags:
+  - safe-sync
+  - authoritative-mirror
 ---
 
 # 安全权威覆盖与自维护发布

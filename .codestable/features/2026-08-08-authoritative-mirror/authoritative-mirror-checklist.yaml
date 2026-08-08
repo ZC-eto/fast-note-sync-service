@@ -1,6 +1,6 @@
 feature: authoritative-mirror
 execution_lane: standard
-status: in_progress
+status: awaiting_user_acceptance
 items:
   - id: mirror-plan
     status: done
@@ -15,5 +15,27 @@ items:
     status: done
     text: route runtime updates and release workflows to ZC-eto forks
   - id: release-deploy
-    status: pending
+    status: done
     text: test, release, deploy, and replace the Windows plugin
+checks:
+  - id: interface-contracts
+    status: passed
+    text: mirror, recovery, role, and safe revision contracts match the approved design
+  - id: mirror-runtime
+    status: passed
+    text: both authoritative directions and both rollback directions pass isolated integration tests
+  - id: safety-guards
+    status: passed
+    text: preview drift, expiry, high-risk confirmation, and remote-mirror write guards are verified
+  - id: settings-ui
+    status: passed
+    text: help, roles, conflict management, overwrite actions, and rollback entry are visible in Obsidian
+  - id: fork-release
+    status: passed
+    text: runtime update and release links resolve only to ZC-eto forks
+  - id: deployment
+    status: passed
+    text: version 3.6.2 is healthy in Dokploy on shared PostgreSQL and the old deployment is preserved
+  - id: documentation
+    status: passed
+    text: server and client safe multi-device sync documents match the final delivery

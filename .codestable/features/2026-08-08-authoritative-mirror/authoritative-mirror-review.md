@@ -37,10 +37,12 @@ reviewed: 2026-08-08
 - 两仓库 `git diff --check` 无空白错误，仅报告 Windows 工作区的 LF/CRLF 提示。
 - 修改过的前端 `.js` 与对应 `.gz`、`.br` 解压内容逐字节一致。
 
-## 残余验证
+## Acceptance 补充证据
 
-- GitHub tag/Release、GHCR 可匿名拉取、Dokploy 原地升级和复制 Vault 的两个覆盖方向属于 acceptance，尚未在本报告中提前宣称通过。
-- Android 本轮不安装；只验证发布 ZIP 可用于后续手工导入。
+- GitHub `3.6.2` / `2.5.0` Release 已发布；GHCR `3.6.2` 可匿名读取，digest 与 Dokploy 部署记录一致。
+- Dokploy 新项目已升级到 `3.6.2`，继续使用共享 PostgreSQL；健康检查和版本更新地址通过，旧项目未改动。
+- Windows 已安装 `2.5.0`，真实 Obsidian 设置页和问号帮助已验证；两个覆盖方向及对应回滚通过隔离 `SafeMirrorManager` 集成测试。
+- Android 本轮不安装；Release ZIP 保持可供后续手工导入。
 
 ## Verdict
 
