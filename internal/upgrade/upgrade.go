@@ -10,6 +10,7 @@ import (
 	"github.com/haierkeys/fast-note-sync-service/internal/config"
 	"github.com/haierkeys/fast-note-sync-service/internal/dao"
 	"github.com/haierkeys/fast-note-sync-service/internal/service"
+	"github.com/haierkeys/fast-note-sync-service/pkg/writequeue"
 
 	"go.uber.org/zap"
 	"golang.org/x/mod/semver"
@@ -77,22 +78,39 @@ func NewMigrationManager(db *gorm.DB, logger *zap.Logger, version string, cfg, u
 	}
 }
 
+func (m *MigrationManager) newMigrationDao(ctx context.Context, writeQueueMgr *writequeue.Manager) *dao.Dao {
+	return dao.New(m.db, ctx,
+		dao.WithConfig(m.config),
+		dao.WithUserDatabaseConfig(m.userConfig),
+		dao.WithLogger(m.logger),
+		dao.WithWriteQueueManager(writeQueueMgr),
+	)
+}
+
 // Run 执行升级
 func (m *MigrationManager) Run(ctx context.Context) error {
 	m.logger.Info("Migration started")
 
+	// Migrations run before the API starts, so they use a dedicated queue and
+	// shut it down before handing control back to the application container.
+	migrationWriteQueue := writequeue.New(nil, m.logger)
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := migrationWriteQueue.Shutdown(shutdownCtx); err != nil {
+			m.logger.Warn("migration write queue shutdown failed", zap.Error(err))
+		}
+	}()
+
 	// 初始化 Dao
-	d := dao.New(m.db, ctx,
-		dao.WithConfig(m.config),
-		dao.WithUserDatabaseConfig(m.userConfig),
-		dao.WithLogger(m.logger),
-	)
+	d := m.newMigrationDao(ctx, migrationWriteQueue)
 
 	// 使用提供的主配置和用户配置初始化 DBUtils
 	dbUtils := service.NewDBUtils(m.db, ctx,
 		dao.WithConfig(m.config),
 		dao.WithUserDatabaseConfig(m.userConfig),
 		dao.WithLogger(m.logger),
+		dao.WithWriteQueueManager(migrationWriteQueue),
 	)
 	err := dbUtils.ExposeAutoMigrate()
 	if err != nil {

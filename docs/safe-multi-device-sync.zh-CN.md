@@ -4,7 +4,7 @@
 
 - 状态：安全修订同步、设备角色、两个权威覆盖方向和最近一次回滚已实现；GitHub 发布、Dokploy 升级与 Windows 实机覆盖验证进行中
 - 日期：2026-08-08
-- 服务端交付版本：Fast Note Sync Service `3.6.1`
+- 服务端交付版本：Fast Note Sync Service `3.6.2`
 - 插件端交付版本：Obsidian Fast Note Sync `2.5.0`
 - 工作分支：两个 fork 均为 `feat/safe-multi-device-sync`
 - 涉及仓库：`fast-note-sync-service`、`obsidian-fast-note-sync`

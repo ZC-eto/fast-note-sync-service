@@ -9,6 +9,7 @@ import (
 	"github.com/haierkeys/fast-note-sync-service/internal/dao"
 	"github.com/haierkeys/fast-note-sync-service/internal/model"
 	"github.com/haierkeys/fast-note-sync-service/pkg/util"
+	"github.com/haierkeys/fast-note-sync-service/pkg/writequeue"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"gorm.io/driver/sqlite"
@@ -20,13 +21,12 @@ func TestSafeRevisionSyncMigrate_PostgresGateAndIdempotentBackfill(t *testing.T)
 	dbPath := filepath.Join(t.TempDir(), "migration.sqlite3")
 	mainDB, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{})
 	require.NoError(t, err)
-	cfg := &config.DatabaseConfig{Type: "sqlite", Path: dbPath, EnableWriteQueue: util.Ptr(false)}
-	d := dao.New(mainDB, ctx,
-		dao.WithConfig(cfg),
-		dao.WithUserDatabaseConfig(cfg),
-		dao.WithLogger(zap.NewNop()),
-	)
+	cfg := &config.DatabaseConfig{Type: "sqlite", Path: dbPath, EnableWriteQueue: util.Ptr(true)}
+	migrationManager := NewMigrationManager(mainDB, zap.NewNop(), "3.6.2", cfg, cfg)
+	migrationWriteQueue := writequeue.New(nil, zap.NewNop())
+	d := migrationManager.newMigrationDao(ctx, migrationWriteQueue)
 	t.Cleanup(func() {
+		require.NoError(t, migrationWriteQueue.Shutdown(context.Background()))
 		for _, key := range []string{"user_safe_sync_1"} {
 			if sqlDB, closeErr := d.ResolveDB(key).DB(); closeErr == nil {
 				_ = sqlDB.Close()
