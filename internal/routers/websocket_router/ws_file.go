@@ -194,7 +194,7 @@ func (h *FileWSHandler) FileUploadCheck(c *pkgapp.WebsocketClient, msg *pkgapp.W
 	switch updateMode {
 	case "UpdateContent", "Create":
 
-		session, err := h.handleFileUploadSessionCreate(c, params.Vault, params.Path, params.PathHash, params.ContentHash, params.Size, params.Ctime, params.Mtime, params.Context)
+		session, err := h.handleFileUploadSessionCreate(c, params.Vault, params.Path, params.PathHash, params.ContentHash, params.Size, params.Ctime, params.Mtime, params.Context, 0)
 		if err != nil {
 			h.respondError(c, code.ErrorFileUploadCheckFailed, err, "websocket_router.file.FileUploadCheck.handleFileUploadSessionCreate")
 			return
@@ -1005,7 +1005,7 @@ func (h *FileWSHandler) doFileSync(c *pkgapp.WebsocketClient, params *dto.FileSy
 					} else {
 						// 服务端修改时间比客户端旧, 通知客户端上传文件
 						if pkgapp.VerifyPermissions(c.Scope, "ws", c.ClientType(), "file_w") {
-							session, ferr := h.handleFileUploadSessionCreate(c, params.Vault, cFile.Path, cFile.PathHash, cFile.ContentHash, cFile.Size, file.Ctime, cFile.Mtime, params.Context)
+							session, ferr := h.handleFileUploadSessionCreate(c, params.Vault, cFile.Path, cFile.PathHash, cFile.ContentHash, cFile.Size, file.Ctime, cFile.Mtime, params.Context, 0)
 							if ferr != nil {
 								h.logError(c, "websocket_router.file.FileSync handleFileUploadSession err", ferr)
 								continue
@@ -1081,7 +1081,7 @@ func (h *FileWSHandler) doFileSync(c *pkgapp.WebsocketClient, params *dto.FileSy
 			// Create upload session and return FileUpload message
 			// 创建上传会话并返回 FileUpload 消息
 			if hasWritePermission {
-				session, ferr := h.handleFileUploadSessionCreate(c, params.Vault, file.Path, file.PathHash, file.ContentHash, file.Size, file.Ctime, file.Mtime, params.Context)
+				session, ferr := h.handleFileUploadSessionCreate(c, params.Vault, file.Path, file.PathHash, file.ContentHash, file.Size, file.Ctime, file.Mtime, params.Context, 0)
 				if ferr != nil {
 					h.logError(c, "websocket_router.file.FileSync handleFileUploadSession err", ferr)
 					continue
@@ -1220,7 +1220,12 @@ func (h *FileWSHandler) handleFileUploadSessionTimeout(c *pkgapp.WebsocketClient
 
 // handleFileUploadSession initializes a file upload session and returns upload message.
 // handleFileUploadSession 初始化一个文件上传会话并返回上传消息.
-func (h *FileWSHandler) handleFileUploadSessionCreate(c *pkgapp.WebsocketClient, vault, path, pathHash, contentHash string, size, ctime, mtime int64, context string, safeMutations ...*dto.SafeMutationRequest) (*FileUploadBinaryChunkSession, error) {
+func (h *FileWSHandler) handleFileUploadSessionCreate(c *pkgapp.WebsocketClient, vault, path, pathHash, contentHash string, size, ctime, mtime int64, context string, requestedChunkSize int64, safeMutations ...*dto.SafeMutationRequest) (*FileUploadBinaryChunkSession, error) {
+	cfg := h.App.Config()
+	chunkSize, err := resolveFileUploadChunkSize(requestedChunkSize, getChunkSizeFromConfig(cfg))
+	if err != nil {
+		return nil, err
+	}
 	var safeMutation *dto.SafeMutationRequest
 	if len(safeMutations) > 0 && safeMutations[0] != nil {
 		copyMutation := *safeMutations[0]
@@ -1234,7 +1239,7 @@ func (h *FileWSHandler) handleFileUploadSessionCreate(c *pkgapp.WebsocketClient,
 			if session.SafeUpload && safeMutation != nil && session.SafeMutation != nil {
 				sameSafeIdentity = session.SafeMutation.DeviceID == safeMutation.DeviceID && session.SafeMutation.OperationID == safeMutation.OperationID
 			}
-			if session.ContentHash == contentHash && session.Vault == vault && session.Size == size && sameSafeIdentity {
+			if session.ContentHash == contentHash && session.Vault == vault && session.Size == size && session.ChunkSize == chunkSize && sameSafeIdentity {
 				h.App.Logger().Info("FileUploadSessionCreate: reusing existing active session for path hash",
 					zap.String("traceId", c.TraceID),
 					zap.Int64("uid", c.User.UID),
@@ -1266,7 +1271,6 @@ func (h *FileWSHandler) handleFileUploadSessionCreate(c *pkgapp.WebsocketClient,
 		zap.Int64("size", size),
 	)
 
-	cfg := h.App.Config()
 	tempDir := cfg.App.TempPath
 	if tempDir == "" {
 		tempDir = "storage/temp"
@@ -1302,7 +1306,7 @@ func (h *FileWSHandler) handleFileUploadSessionCreate(c *pkgapp.WebsocketClient,
 		Size:           size,
 		Ctime:          ctime,
 		Mtime:          mtime,
-		ChunkSize:      getChunkSizeFromConfig(cfg), // 从注入的配置获取
+		ChunkSize:      chunkSize,
 		SavePath:       tempPath,
 		FileHandle:     nil, // Lazy creation in FileUploadChunkBinary // 在 FileUploadChunkBinary 中延迟创建
 		CreatedAt:      time.Now(),
@@ -1507,4 +1511,16 @@ func (h *FileWSHandler) FileRePush(c *pkgapp.WebsocketClient, msg *pkgapp.WebSoc
 // getChunkSizeFromConfig 从注入的配置获取分片大小, 默认为 512KB
 func getChunkSizeFromConfig(cfg *app.AppConfig) int64 {
 	return util.ParseSize(cfg.App.FileChunkSize, 1024*512)
+}
+
+func resolveFileUploadChunkSize(requested, fallback int64) (int64, error) {
+	if requested == 0 {
+		return fallback, nil
+	}
+	const minRequestedChunkSize = int64(64 * 1024)
+	const maxRequestedChunkSize = int64(8 * 1024 * 1024)
+	if requested < minRequestedChunkSize || requested > maxRequestedChunkSize {
+		return 0, fmt.Errorf("requested file chunk size must be between %d and %d bytes", minRequestedChunkSize, maxRequestedChunkSize)
+	}
+	return requested, nil
 }

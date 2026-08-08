@@ -217,6 +217,27 @@ func TestSafeSyncProtobufResponsesAndStructuredError(t *testing.T) {
 	require.Equal(t, int64(8), errorData.ActualRevision)
 }
 
+func TestResolveFileUploadChunkSize(t *testing.T) {
+	t.Run("legacy upload uses configured size", func(t *testing.T) {
+		got, err := resolveFileUploadChunkSize(0, 512*1024)
+		require.NoError(t, err)
+		require.Equal(t, int64(512*1024), got)
+	})
+
+	t.Run("safe upload honors requested size", func(t *testing.T) {
+		got, err := resolveFileUploadChunkSize(1024*1024, 512*1024)
+		require.NoError(t, err)
+		require.Equal(t, int64(1024*1024), got)
+	})
+
+	for _, requested := range []int64{1, 16 * 1024 * 1024} {
+		t.Run("rejects unsafe requested size", func(t *testing.T) {
+			_, err := resolveFileUploadChunkSize(requested, 512*1024)
+			require.Error(t, err)
+		})
+	}
+}
+
 func TestSafeSyncErrorCodesAndRBAC(t *testing.T) {
 	tests := []struct {
 		domainCode domain.SafeSyncErrorCode

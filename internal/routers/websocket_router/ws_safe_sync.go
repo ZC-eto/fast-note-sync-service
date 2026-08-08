@@ -166,7 +166,7 @@ func (h *SafeSyncWSHandler) FileUploadStart(c *pkgapp.WebsocketClient, msg *pkga
 	}
 	session, err := h.fileHandler.handleFileUploadSessionCreate(
 		c, params.Vault, params.Path, params.PathHash, params.ContentHash,
-		params.Size, params.Ctime, params.Mtime, params.Context, &params.SafeMutationRequest,
+		params.Size, params.Ctime, params.Mtime, params.Context, params.ChunkSize, &params.SafeMutationRequest,
 	)
 	if err != nil {
 		h.respondSafeSyncError(c, msg, err, code.ErrorFileUploadFailed, params.Vault, params.Context, "websocket_router.safe_sync.FileUploadStart.Session")
