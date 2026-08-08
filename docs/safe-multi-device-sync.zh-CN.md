@@ -34,20 +34,20 @@
 - 更新检查、安装包下载、Issue、服务端自升级、网页仓库入口和发布工作流均固定使用 `ZC-eto` 的两个 fork，不再访问上游 CNB 更新源。
 - 服务端每日旧版 FID 维护任务会跳过 `STRICT` 与 `BOOTSTRAPPING` Vault；安全状态无法确认时按保护原则跳过，SQLite 等不支持安全协议的后端仍沿用旧维护逻辑。
 
-### 2026-08-08 自用部署记录
+### 2026-08-08/09 自用部署记录
 
 - 服务端 fork 当前正式提交为 `4de43290cde3`，GitHub Release 为 `3.6.9`。Dokploy 使用公开镜像 `ghcr.io/zc-eto/fast-note-sync-service:3.6.9`；回滚镜像保留为 `3.6.8`。
-- 新项目 `Fast Note Sync Safe` 使用 Raw Docker Compose，Project ID 为 `OYjtnXHVjLi9RU90CGUVv`，Compose ID 为 `02ETDVvAGzvwANUcbK7AT`，`autoDeploy=false`。服务名为 `fast-note-sync-safe`，内部别名为 `fast-note-sync-safe` 和 `fns-safe`，只在共享 `dokploy-network` 暴露容器端口 `9000`。
+- `fast-note-sync-safe` 使用 Raw Docker Compose，Compose ID 为 `02ETDVvAGzvwANUcbK7AT`，`autoDeploy=false`。2026-08-09 已从独立项目 `Fast Note Sync Safe` 移入 `Personal / production`（Project ID `l1mfKyyFOHJQQw8GL-7ts`，Environment ID `B-R8ck_N8NHLhArBK47T1`）。服务名、内部别名 `fast-note-sync-safe` / `fns-safe`、共享 `dokploy-network` 和容器端口 `9000` 均未改变。
 - 临时公网入口为 `https://fast-note-sync-safe-1irxvu-6387b0-23-144-4-140.sslip.io`；`GET /api/health` 返回 `healthy` 且数据库 `connected`，`GET /api/version` 返回服务端 `3.6.9`、Git 提交 `4de43290cde3`，服务端和插件 Release 地址均指向 `ZC-eto` fork。最终 Compose 仅保留主服务，没有遗留一次性迁移容器。
 - 持久卷为 `fast-note-sync-safe-storage` 和 `fast-note-sync-safe-config`；安全同步 staging/recovery 位于 storage 持久卷内，不依赖容器层。
 - 用户库接入现有共享 PostgreSQL `postgres-main`，未新建 PostgreSQL 服务。数据库为 `fast_note_sync_safe`，应用角色为 `fast_note_sync_app`；管理员凭证不在 Compose 中，应用密码只保存在 Dokploy 的 `FNS_DB_PASSWORD` 环境变量。
 - `fast_note_sync_safe` PostgreSQL 每日备份到 Cloudflare R2，`storage` 与 `config` 两个持久卷也分别每日备份；三类备份均启用并各保留最近 14 份，PostgreSQL 手动备份和 R2 对象已验证成功。
 - UID 1 的 SQLite 数据已导入 PostgreSQL。首次 `--apply` 与第二次幂等 `--apply` 均为 `verified=true`，14 张表的行数、最大主键和关键字段摘要一致。默认 dry-run 只盘点 SQLite 源端，目标计数为 0 是只读设计行为，不代表数据缺失。
-- 旧 Compose `5EkxiW3L8n8mgdu6dp0Vg`、旧镜像 `haierkeys/fast-note-sync-service:3.3.1`、原卷和 `https://fns.prismio.net` 均保持运行且未被覆盖。旧 storage/config 已分别备份到 Cloudflare R2，备份 ID 为 `ZXiRAw7hpEYBMmrhHt6RZ` 和 `8Hh2pY5oGL2HsQ_opwdtO`，两次手动备份状态均为 `done`，构成回滚点。
+- 旧 Compose `5EkxiW3L8n8mgdu6dp0Vg`（镜像 `haierkeys/fast-note-sync-service:3.3.1`）已于 2026-08-09 在 `Personal / production` 停止，状态为 `idle`；Compose、原卷和 `https://fns.prismio.net` 域名配置均未删除。旧 storage/config 已分别备份到 Cloudflare R2，备份 ID 为 `ZXiRAw7hpEYBMmrhHt6RZ` 和 `8Hh2pY5oGL2HsQ_opwdtO`，两次手动备份状态均为 `done`，仍可作为回滚点。
 - Windows Vault `E:\Document\Notes` 已安装插件 `2.5.8`，实际 `main.js` SHA-256 与 GitHub Release 资产一致。`2.5.7` 和 `2.5.6` 的安装前产物均保存在 `.obsidian/plugin-backups/fast-note-sync/`，原设置和同步状态文件未覆盖。
 - Obsidian 运行时已确认插件加载、现有授权令牌可用、WebSocket 鉴权成功；`safeRevisionSyncEnabled=true`、角色为 `bidirectional`，服务端为 `STRICT`，客户端为 `active`，写入模式为 `safe`。生产 Vault 的本地覆盖远端预览为本地 875 项、远端 875 项、零差异；取消以及本地 session 丢失后的安全接管取消均通过，无残留状态或控制台错误。
 
-GitHub `3.6.9` / `2.5.8` Release、GHCR 镜像、Dokploy 新项目、共享 PostgreSQL、R2 备份、Windows 插件替换和生产 Vault 零差异预览均已验证。插件隔离集成测试实际执行两个权威覆盖方向、两个方向回滚、预览后本地漂移、计划过期及角色写入限制；生产 Vault 因已零差异，没有执行无意义的破坏性覆盖。Android 本轮只保留可手工导入的发布产物，不安装。
+GitHub `3.6.9` / `2.5.8` Release、GHCR 镜像、Dokploy `Personal` 项目归属、共享 PostgreSQL、R2 备份、Windows 插件替换和生产 Vault 零差异预览均已验证。插件隔离集成测试实际执行两个权威覆盖方向、两个方向回滚、预览后本地漂移、计划过期及角色写入限制；生产 Vault 因已零差异，没有执行无意义的破坏性覆盖。Android 本轮只保留可手工导入的发布产物，不安装。
 
 ## 一、目标
 
