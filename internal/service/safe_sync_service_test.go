@@ -184,7 +184,7 @@ func TestSafeSyncService_BootstrapReconcilesLegacyContentBeforeBuildingManifest(
 	require.NoError(t, db.AutoMigrate(&model.Note{}, &model.File{}, &model.Folder{}))
 	require.NoError(t, db.Create(&model.Note{
 		ID: 21, VaultID: 19, Action: "modify", Path: "changed.md", PathHash: "path-current",
-		Content: "current", ContentHash: "hash-current", Size: 7,
+		Content: "当前内容", ContentHash: "stale-stored-hash", Size: 0,
 	}).Error)
 	require.NoError(t, db.Create(&model.SyncResourceMetadata{
 		ResourceID: "stale-note", VaultID: 19, ResourceType: "NOTE", LegacyID: 21,
@@ -198,8 +198,8 @@ func TestSafeSyncService_BootstrapReconcilesLegacyContentBeforeBuildingManifest(
 	require.NoError(t, err)
 	require.Len(t, page.Items, 1)
 	require.Equal(t, "path-current", page.Items[0].PathHash)
-	require.Equal(t, "hash-current", page.Items[0].ContentHash)
-	require.Equal(t, int64(7), page.Items[0].Size)
+	require.Equal(t, util.EncodeHash32("当前内容"), page.Items[0].ContentHash)
+	require.Equal(t, int64(len("当前内容")), page.Items[0].Size)
 }
 
 func TestSafeSyncService_BootstrapRejectsLegacyChangeBeforeCommit(t *testing.T) {

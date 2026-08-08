@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/haierkeys/fast-note-sync-service/internal/model"
+	"github.com/haierkeys/fast-note-sync-service/pkg/util"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -141,12 +142,13 @@ func reconcileLegacyNotes(tx *gorm.DB, vaultID int64) error {
 		return nil
 	}
 	var notes []model.Note
-	if err := tx.Select("id", "vault_id", "action", "path", "path_hash", "content_hash", "size").
+	if err := tx.Select("id", "vault_id", "action", "path", "path_hash", "content").
 		Where("vault_id = ?", vaultID).Find(&notes).Error; err != nil {
 		return err
 	}
 	for _, note := range notes {
-		if err := reconcileLegacyResource(tx, "NOTE", note.ID, note.VaultID, note.Action, note.Path, note.PathHash, note.ContentHash, note.Size); err != nil {
+		if err := reconcileLegacyResource(tx, "NOTE", note.ID, note.VaultID, note.Action, note.Path, note.PathHash,
+			util.EncodeHash32(note.Content), int64(len(note.Content))); err != nil {
 			return err
 		}
 	}
