@@ -130,9 +130,7 @@
 bash <(curl -fsSL https://raw.githubusercontent.com/ZC-eto/fast-note-sync-service/master/scripts/quest_install.sh)
 ```
 
-중국 지역은 Tencent `cnb.cool` 미러 소스를 사용할 수 있습니다:
-```bash
-```
+자체 유지 관리 버전은 위의 `ZC-eto` GitHub fork만 설치 및 업데이트 소스로 사용합니다.
 
 
 **스크립트의 주요 동작:**

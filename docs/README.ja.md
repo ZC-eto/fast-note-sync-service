@@ -130,9 +130,7 @@
 bash <(curl -fsSL https://raw.githubusercontent.com/ZC-eto/fast-note-sync-service/master/scripts/quest_install.sh)
 ```
 
-中国のユーザーは、Tencent `cnb.cool` ミラーソースを使用できます：
-```bash
-```
+自己管理版では、上記の `ZC-eto` GitHub fork のみをインストールおよび更新元として使用します。
 
 
 **スクリプトの主な動作：**

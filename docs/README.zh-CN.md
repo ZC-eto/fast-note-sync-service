@@ -131,9 +131,7 @@
 bash <(curl -fsSL https://raw.githubusercontent.com/ZC-eto/fast-note-sync-service/master/scripts/quest_install.sh)
 ```
 
-中国地区可以使用腾讯 `cnb.cool` 镜像源
-```bash
-```
+自维护版本只使用上述 `ZC-eto` GitHub fork 作为安装与更新来源。
 
 
 **脚本主要行为：**

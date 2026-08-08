@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/haierkeys/fast-note-sync-service/internal/app"
+	"github.com/haierkeys/fast-note-sync-service/internal/domain"
+	"github.com/haierkeys/fast-note-sync-service/internal/dto"
 	"go.uber.org/zap"
 )
 
@@ -49,6 +51,17 @@ func (t *SyncFIDTask) Run(ctx context.Context) error {
 		}
 
 		for _, vault := range vaults {
+			status, statusErr := t.app.SafeSyncService.Status(ctx, uid, vault.ID)
+			if shouldSkipLegacyFIDSync(status, statusErr) {
+				fields := []zap.Field{zap.Int64("uid", uid), zap.Int64("vaultID", vault.ID), zap.String("vaultName", vault.Name)}
+				if statusErr != nil {
+					t.logger.Warn("SyncFIDTask: skipping vault because safe sync state is unavailable", append(fields, zap.Error(statusErr))...)
+				} else {
+					t.logger.Info("SyncFIDTask: skipping safe revision vault", append(fields, zap.String("state", status.State))...)
+				}
+				continue
+			}
+
 			// 3. 执行全量 FID 同步
 			t.logger.Info("SyncFIDTask: syncing FID for vault", zap.Int64("uid", uid), zap.Int64("vaultID", vault.ID), zap.String("vaultName", vault.Name))
 
@@ -83,6 +96,16 @@ func (t *SyncFIDTask) Run(ctx context.Context) error {
 
 	t.logger.Info("SyncFIDTask: startup sync completed")
 	return nil
+}
+
+func shouldSkipLegacyFIDSync(status *dto.SafeSyncStatusResponse, err error) bool {
+	if err != nil {
+		return status == nil || status.Capability
+	}
+	if status == nil {
+		return true
+	}
+	return status.State == string(domain.VaultSyncStateStrict) || status.State == string(domain.VaultSyncStateBootstrapping)
 }
 
 // NewSyncFIDTask 创建同步任务
