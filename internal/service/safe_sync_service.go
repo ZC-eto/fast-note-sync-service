@@ -138,7 +138,7 @@ func (s *safeSyncService) BootstrapStart(ctx context.Context, uid, vaultID int64
 			return err
 		}
 		if previousState == string(domain.VaultSyncStateOff) {
-			if err := s.uow.ReconcileLegacyResourceMetadata(tx, vaultID); err != nil {
+			if err := s.uow.ReconcileLegacyResourceMetadata(tx, uid, vaultID); err != nil {
 				return err
 			}
 		}
@@ -272,7 +272,7 @@ func (s *safeSyncService) BootstrapCommit(ctx context.Context, uid, vaultID int6
 			return newSafeSyncError(domain.SafeSyncErrorBootstrapStateConflict, "bootstrap commit compare-and-swap failed")
 		}
 		if state.BootstrapPreviousState == string(domain.VaultSyncStateOff) {
-			if err := s.uow.ReconcileLegacyResourceMetadata(tx, vaultID); err != nil {
+			if err := s.uow.ReconcileLegacyResourceMetadata(tx, uid, vaultID); err != nil {
 				return err
 			}
 			currentManifestHash, _, err := bootstrapManifestTx(tx, vaultID)

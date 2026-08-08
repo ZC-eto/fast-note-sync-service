@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"github.com/haierkeys/fast-note-sync-service/internal/config"
 	"github.com/haierkeys/fast-note-sync-service/internal/dao"
 	"github.com/haierkeys/fast-note-sync-service/internal/domain"
+	"github.com/haierkeys/fast-note-sync-service/internal/dto"
 	"github.com/haierkeys/fast-note-sync-service/internal/model"
 	"github.com/haierkeys/fast-note-sync-service/pkg/util"
 	"github.com/stretchr/testify/require"
@@ -179,13 +181,18 @@ func TestSafeSyncService_BootstrapPagesAndCommitsStrictWithoutDowngrade(t *testi
 }
 
 func TestSafeSyncService_BootstrapReconcilesLegacyContentBeforeBuildingManifest(t *testing.T) {
+	t.Chdir(t.TempDir())
 	ctx := context.Background()
 	service, db := setupSafeSyncServiceTest(t, "postgres", true)
 	require.NoError(t, db.AutoMigrate(&model.Note{}, &model.File{}, &model.Folder{}))
 	require.NoError(t, db.Create(&model.Note{
 		ID: 21, VaultID: 19, Action: "modify", Path: "changed.md", PathHash: "path-current",
-		Content: "当前内容", ContentHash: "stale-stored-hash", Size: 0,
+		Content: "数据库中的旧内容", ContentHash: "stale-stored-hash", Size: 0,
 	}).Error)
+	noteContent := "content.txt 中的当前内容"
+	noteFolder := filepath.Join("storage", "vault", "u_1", "note", "n_21")
+	require.NoError(t, os.MkdirAll(noteFolder, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(noteFolder, "content.txt"), []byte(noteContent), 0o644))
 	require.NoError(t, db.Create(&model.SyncResourceMetadata{
 		ResourceID: "stale-note", VaultID: 19, ResourceType: "NOTE", LegacyID: 21,
 		ResourceRevision: 1, CurrentPath: "changed.md", CurrentPathHash: "path-stale",
@@ -198,11 +205,12 @@ func TestSafeSyncService_BootstrapReconcilesLegacyContentBeforeBuildingManifest(
 	require.NoError(t, err)
 	require.Len(t, page.Items, 1)
 	require.Equal(t, "path-current", page.Items[0].PathHash)
-	require.Equal(t, util.EncodeHash32("当前内容"), page.Items[0].ContentHash)
-	require.Equal(t, int64(len("当前内容")), page.Items[0].Size)
+	require.Equal(t, util.EncodeHash32(noteContent), page.Items[0].ContentHash)
+	require.Equal(t, int64(len([]byte(noteContent))), page.Items[0].Size)
 }
 
 func TestSafeSyncService_BootstrapRejectsLegacyChangeBeforeCommit(t *testing.T) {
+	t.Chdir(t.TempDir())
 	ctx := context.Background()
 	service, db := setupSafeSyncServiceTest(t, "postgres", true)
 	require.NoError(t, db.AutoMigrate(&model.Note{}, &model.File{}, &model.Folder{}))
@@ -211,11 +219,13 @@ func TestSafeSyncService_BootstrapRejectsLegacyChangeBeforeCommit(t *testing.T) 
 		Content: "before", ContentHash: "hash-before", Size: 6,
 	}
 	require.NoError(t, db.Create(&note).Error)
+	noteFolder := filepath.Join("storage", "vault", "u_1", "note", "n_22")
+	require.NoError(t, os.MkdirAll(noteFolder, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(noteFolder, "content.txt"), []byte("before"), 0o644))
 
 	started, err := service.BootstrapStart(ctx, 1, 20, "device-a")
 	require.NoError(t, err)
-	require.NoError(t, db.Model(&model.Note{}).Where("id = ?", note.ID).
-		Updates(map[string]any{"content": "after", "content_hash": "hash-after", "size": 5}).Error)
+	require.NoError(t, os.WriteFile(filepath.Join(noteFolder, "content.txt"), []byte("after"), 0o644))
 
 	_, err = service.BootstrapCommit(ctx, 1, 20, started.SessionID, started.ManifestHash, started.SnapshotVaultRevision)
 	require.Equal(t, domain.SafeSyncErrorBootstrapStateConflict, safeSyncErrorCode(err))
@@ -223,6 +233,60 @@ func TestSafeSyncService_BootstrapRejectsLegacyChangeBeforeCommit(t *testing.T) 
 	var state model.VaultSyncState
 	require.NoError(t, db.Where("vault_id = ?", 20).Take(&state).Error)
 	require.Equal(t, string(domain.VaultSyncStateBootstrapping), state.State)
+}
+
+func TestSafeSyncService_BootstrapReconcilesAttachmentFromPhysicalContent(t *testing.T) {
+	t.Chdir(t.TempDir())
+	ctx := context.Background()
+	service, db := setupSafeSyncServiceTest(t, "postgres", true)
+	require.NoError(t, db.AutoMigrate(&model.Note{}, &model.File{}, &model.Folder{}))
+	require.NoError(t, db.Create(&model.File{
+		ID: 23, VaultID: 21, Action: "modify", Path: "assets/current.bin", PathHash: "path-current",
+		ContentHash: "stale-stored-hash", Size: 1,
+	}).Error)
+	legacyPath := filepath.Join("legacy", "attachment.bin")
+	require.NoError(t, db.Create(&model.File{
+		ID: 25, VaultID: 21, Action: "modify", Path: "assets/legacy.bin", PathHash: "path-legacy",
+		ContentHash: "another-stale-hash", Size: 2, SavePath: legacyPath,
+	}).Error)
+	content := []byte{0, 1, 2, 3, 254, 255}
+	fileFolder := filepath.Join("storage", "vault", "u_1", "file", "f_23")
+	require.NoError(t, os.MkdirAll(fileFolder, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(fileFolder, "file.dat"), content, 0o644))
+	legacyContent := []byte("legacy physical attachment")
+	require.NoError(t, os.MkdirAll(filepath.Dir(legacyPath), 0o755))
+	require.NoError(t, os.WriteFile(legacyPath, legacyContent, 0o644))
+
+	started, err := service.BootstrapStart(ctx, 1, 21, "device-a")
+	require.NoError(t, err)
+	page, err := service.BootstrapPage(ctx, 1, 21, started.SessionID, started.Cursor, 20)
+	require.NoError(t, err)
+	require.Len(t, page.Items, 2)
+	items := make(map[string]dto.SafeSyncManifestItem, len(page.Items))
+	for _, item := range page.Items {
+		items[item.Path] = item
+	}
+	require.Equal(t, util.EncodeHash32Bytes(content), items["assets/current.bin"].ContentHash)
+	require.Equal(t, int64(len(content)), items["assets/current.bin"].Size)
+	require.Equal(t, util.EncodeHash32Bytes(legacyContent), items["assets/legacy.bin"].ContentHash)
+	require.Equal(t, int64(len(legacyContent)), items["assets/legacy.bin"].Size)
+}
+
+func TestSafeSyncService_BootstrapFailsClosedWhenLiveContentIsMissing(t *testing.T) {
+	t.Chdir(t.TempDir())
+	ctx := context.Background()
+	service, db := setupSafeSyncServiceTest(t, "postgres", true)
+	require.NoError(t, db.AutoMigrate(&model.Note{}, &model.File{}, &model.Folder{}))
+	require.NoError(t, db.Create(&model.Note{
+		ID: 24, VaultID: 22, Action: "modify", Path: "missing.md", PathHash: "path-missing",
+	}).Error)
+
+	_, err := service.BootstrapStart(ctx, 1, 22, "device-a")
+	require.ErrorContains(t, err, "live note content is unavailable")
+
+	var stateCount int64
+	require.NoError(t, db.Model(&model.VaultSyncState{}).Where("vault_id = ?", 22).Count(&stateCount).Error)
+	require.Zero(t, stateCount)
 }
 
 func TestSafeSyncService_EventsRequireAvailableCursor(t *testing.T) {

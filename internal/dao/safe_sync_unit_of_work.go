@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"path/filepath"
 	"strconv"
 	"time"
@@ -119,7 +121,7 @@ func (u *SafeSyncUnitOfWork) BackfillResourceMetadata(ctx context.Context, uid i
 
 // ReconcileLegacyResourceMetadata refreshes the safe-sync baseline from the
 // legacy tables after the Vault has been frozen in BOOTSTRAPPING state.
-func (u *SafeSyncUnitOfWork) ReconcileLegacyResourceMetadata(tx *gorm.DB, vaultID int64) error {
+func (u *SafeSyncUnitOfWork) ReconcileLegacyResourceMetadata(tx *gorm.DB, uid, vaultID int64) error {
 	if tx == nil {
 		return errors.New("safe sync transaction is nil")
 	}
@@ -128,48 +130,129 @@ func (u *SafeSyncUnitOfWork) ReconcileLegacyResourceMetadata(tx *gorm.DB, vaultI
 		Update("state", "DELETED").Error; err != nil {
 		return err
 	}
-	if err := reconcileLegacyNotes(tx, vaultID); err != nil {
+	if err := u.reconcileLegacyNotes(tx, uid, vaultID); err != nil {
 		return err
 	}
-	if err := reconcileLegacyFiles(tx, vaultID); err != nil {
+	if err := u.reconcileLegacyFiles(tx, uid, vaultID); err != nil {
 		return err
 	}
 	return reconcileLegacyFolders(tx, vaultID)
 }
 
-func reconcileLegacyNotes(tx *gorm.DB, vaultID int64) error {
+func (u *SafeSyncUnitOfWork) reconcileLegacyNotes(tx *gorm.DB, uid, vaultID int64) error {
 	if !tx.Migrator().HasTable(&model.Note{}) {
 		return nil
 	}
 	var notes []model.Note
-	if err := tx.Select("id", "vault_id", "action", "path", "path_hash", "content").
+	if err := tx.Select("id", "vault_id", "action", "path", "path_hash", "content", "content_hash", "size").
 		Where("vault_id = ?", vaultID).Find(&notes).Error; err != nil {
 		return err
 	}
 	for _, note := range notes {
+		contentHash, size := note.ContentHash, note.Size
+		if note.Action != "delete" {
+			content, exists, err := u.dao.LoadContentFromFile(u.dao.GetNoteFolderPath(uid, note.ID), "content.txt")
+			if err != nil {
+				return fmt.Errorf("read live note content for note %d: %w", note.ID, err)
+			}
+			if !exists {
+				if note.Content == "" {
+					return fmt.Errorf("live note content is unavailable for note %d", note.ID)
+				}
+				content = note.Content
+			}
+			contentHash = util.EncodeHash32(content)
+			size = int64(len([]byte(content)))
+		}
 		if err := reconcileLegacyResource(tx, "NOTE", note.ID, note.VaultID, note.Action, note.Path, note.PathHash,
-			util.EncodeHash32(note.Content), int64(len(note.Content))); err != nil {
+			contentHash, size); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func reconcileLegacyFiles(tx *gorm.DB, vaultID int64) error {
+func (u *SafeSyncUnitOfWork) reconcileLegacyFiles(tx *gorm.DB, uid, vaultID int64) error {
 	if !tx.Migrator().HasTable(&model.File{}) {
 		return nil
 	}
 	var files []model.File
-	if err := tx.Select("id", "vault_id", "action", "path", "path_hash", "content_hash", "size").
+	if err := tx.Select("id", "vault_id", "action", "path", "path_hash", "content_hash", "size", "save_path").
 		Where("vault_id = ?", vaultID).Find(&files).Error; err != nil {
 		return err
 	}
 	for _, file := range files {
-		if err := reconcileLegacyResource(tx, "FILE", file.ID, file.VaultID, file.Action, file.Path, file.PathHash, file.ContentHash, file.Size); err != nil {
+		contentHash, size := file.ContentHash, file.Size
+		if file.Action != "delete" {
+			contentPath, err := u.resolveLiveFileContentPath(uid, &file)
+			if err != nil {
+				return err
+			}
+			contentHash, size, err = hashLiveFileContent(contentPath)
+			if err != nil {
+				return fmt.Errorf("read live attachment content for file %d: %w", file.ID, err)
+			}
+		}
+		if err := reconcileLegacyResource(tx, "FILE", file.ID, file.VaultID, file.Action, file.Path, file.PathHash, contentHash, size); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func (u *SafeSyncUnitOfWork) resolveLiveFileContentPath(uid int64, file *model.File) (string, error) {
+	paths := []string{u.FileContentPath(uid, file.ID)}
+	if file.SavePath != "" && file.SavePath != paths[0] {
+		paths = append(paths, file.SavePath)
+	}
+	for _, path := range paths {
+		info, err := os.Stat(path)
+		if err == nil {
+			if !info.Mode().IsRegular() {
+				return "", fmt.Errorf("live attachment content is not a regular file for file %d", file.ID)
+			}
+			return path, nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", fmt.Errorf("stat live attachment content for file %d: %w", file.ID, err)
+		}
+	}
+	return "", fmt.Errorf("live attachment content is unavailable for file %d", file.ID)
+}
+
+func hashLiveFileContent(path string) (string, int64, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", 0, err
+	}
+	defer file.Close()
+
+	info, err := file.Stat()
+	if err != nil {
+		return "", 0, err
+	}
+	size := info.Size()
+	if size <= util.FileHashThreshold {
+		content, err := io.ReadAll(file)
+		if err != nil {
+			return "", 0, err
+		}
+		if int64(len(content)) != size {
+			return "", 0, io.ErrUnexpectedEOF
+		}
+		return util.EncodeHash32Bytes(content), size, nil
+	}
+
+	sliceSize := int64(util.FileHashSliceSize)
+	samples := make([]byte, util.FileHashSliceSize*3)
+	offsets := []int64{0, size/2 - sliceSize/2, size - sliceSize}
+	for index, offset := range offsets {
+		start := index * util.FileHashSliceSize
+		if _, err := file.ReadAt(samples[start:start+util.FileHashSliceSize], offset); err != nil {
+			return "", 0, err
+		}
+	}
+	return util.EncodeHash32Bytes(samples), size, nil
 }
 
 func reconcileLegacyFolders(tx *gorm.DB, vaultID int64) error {

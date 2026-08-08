@@ -3,6 +3,7 @@ package dao
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"sort"
 	"sync"
@@ -47,6 +48,20 @@ func setupSafeSyncUnitOfWorkTest(t *testing.T) (*SafeSyncUnitOfWork, *gorm.DB) {
 		}
 	})
 	return uow, daoInst.ResolveDB(uow.GetKey(1))
+}
+
+func TestHashLiveFileContentMatchesPluginSamplingForLargeFiles(t *testing.T) {
+	content := make([]byte, util.FileHashThreshold+12345)
+	for index := range content {
+		content[index] = byte(index % 251)
+	}
+	path := filepath.Join(t.TempDir(), "large-attachment.bin")
+	require.NoError(t, os.WriteFile(path, content, 0o644))
+
+	contentHash, size, err := hashLiveFileContent(path)
+	require.NoError(t, err)
+	require.Equal(t, util.EncodeHash32Bytes(content), contentHash)
+	require.Equal(t, int64(len(content)), size)
 }
 
 func TestSafeSyncUnitOfWork_RollsBackResourceEventAndOperationTogether(t *testing.T) {
