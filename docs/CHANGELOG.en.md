@@ -6,6 +6,17 @@ The project adheres to [Keep a Changelog](https://keepachangelog.com/en/0.3.0/) 
 
 ---
 
+## v3.6.12
+> *2026/08/12*
+
+### Fixed
+
+- **Safe Sync**: Fixed safe note, attachment, and folder writes preserving the full path while failing to maintain the legacy parent `FID` and folder level. Nested resources are no longer promoted to the WebGUI root.
+- **Safe Sync**: Folder moves and renames now rebuild parent relationships for the folder and every descendant in the same transaction. Safe attachment renames now use the same revision, idempotency, and path validation flow as notes.
+- **Data Repair**: PostgreSQL startup repairs existing legacy hierarchy metadata for every `STRICT` Vault. The repair only updates legacy `FID` and folder-level fields; it does not change content, safe resources, events, or revisions.
+
+---
+
 ## v3.6.0
 > *2026/07/09*
 

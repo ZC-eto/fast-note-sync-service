@@ -97,7 +97,12 @@ func (a *App) RecoverPreparedSafeSyncOperations(ctx context.Context) error {
 	if a == nil || a.config == nil || !strings.EqualFold(a.config.UserDatabase.Type, "postgres") {
 		return nil
 	}
-	return recoverPreparedSafeSyncOperations(ctx, a.UserRepo, a.SafeMutationCoordinator.RecoverPrepared)
+	return recoverPreparedSafeSyncOperations(ctx, a.UserRepo, func(ctx context.Context, uid int64) error {
+		if err := a.SafeMutationCoordinator.RecoverPrepared(ctx, uid); err != nil {
+			return err
+		}
+		return a.SafeMutationCoordinator.RepairLegacyHierarchy(ctx, uid)
+	})
 }
 
 // Close releases resources held by application container
@@ -654,8 +659,6 @@ func (a *App) Shutdown(ctx context.Context) error {
 			a.logger.Warn("Share service shutdown error", zap.Error(err))
 		}
 	}
-
-
 
 	// 0.2 Shutdown CloudflareService
 	if a.CloudflareService != nil {

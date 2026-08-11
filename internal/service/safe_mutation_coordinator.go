@@ -366,6 +366,29 @@ func (c *SafeMutationCoordinator) RecoverPrepared(ctx context.Context, uid int64
 	return nil
 }
 
+// RepairLegacyHierarchy restores the legacy FID relationships consumed by the
+// WebGUI without changing safe-sync resources, revisions, or content.
+func (c *SafeMutationCoordinator) RepairLegacyHierarchy(ctx context.Context, uid int64) error {
+	var vaultIDs []int64
+	if err := c.uow.Transaction(ctx, uid, func(tx *gorm.DB) error {
+		return tx.Model(&model.VaultSyncState{}).
+			Where("state = ?", "STRICT").Order("vault_id").Pluck("vault_id", &vaultIDs).Error
+	}); err != nil {
+		return err
+	}
+	for _, vaultID := range vaultIDs {
+		unlock := c.lockVault(uid, vaultID)
+		err := c.uow.Transaction(ctx, uid, func(tx *gorm.DB) error {
+			return repairSafeLegacyHierarchy(tx, vaultID)
+		})
+		unlock()
+		if err != nil {
+			return fmt.Errorf("repair safe sync hierarchy for vault %d: %w", vaultID, err)
+		}
+	}
+	return nil
+}
+
 func (c *SafeMutationCoordinator) recoverPreparedVault(ctx context.Context, uid, vaultID int64) error {
 	var operations []model.SyncOperation
 	if err := c.uow.Transaction(ctx, uid, func(tx *gorm.DB) error {
@@ -560,9 +583,13 @@ func applyPreparedSafeContentRecord(tx *gorm.DB, resourceType domain.SyncResourc
 
 func applyPreparedSafeNoteRecord(tx *gorm.DB, resource *model.SyncResourceMetadata, request *dto.SafeMutationRequest, create bool) error {
 	now := timex.Now()
+	fid, err := safeLegacyParentFID(tx, resource.VaultID, request.Path)
+	if err != nil {
+		return err
+	}
 	if create {
 		return tx.Create(&model.Note{
-			ID: resource.LegacyID, VaultID: resource.VaultID, Action: "create", Path: request.Path,
+			ID: resource.LegacyID, VaultID: resource.VaultID, Action: "create", FID: fid, Path: request.Path,
 			PathHash: request.PathHash, Content: "", ContentHash: request.ContentHash, Version: 1, Size: request.Size,
 			Ctime: request.Ctime, Mtime: request.Mtime, UpdatedTimestamp: now.UnixMilli(), CreatedAt: now, UpdatedAt: now,
 		}).Error
@@ -572,6 +599,7 @@ func applyPreparedSafeNoteRecord(tx *gorm.DB, resource *model.SyncResourceMetada
 		return err
 	}
 	note.Action = "modify"
+	note.FID = fid
 	note.Path = request.Path
 	note.PathHash = request.PathHash
 	note.Content = ""
@@ -588,9 +616,13 @@ func applyPreparedSafeNoteRecord(tx *gorm.DB, resource *model.SyncResourceMetada
 
 func applyPreparedSafeFileRecord(tx *gorm.DB, resource *model.SyncResourceMetadata, request *dto.SafeMutationRequest, create bool) error {
 	now := timex.Now()
+	fid, err := safeLegacyParentFID(tx, resource.VaultID, request.Path)
+	if err != nil {
+		return err
+	}
 	if create {
 		return tx.Create(&model.File{
-			ID: resource.LegacyID, VaultID: resource.VaultID, Action: "create", Path: request.Path,
+			ID: resource.LegacyID, VaultID: resource.VaultID, Action: "create", FID: fid, Path: request.Path,
 			PathHash: request.PathHash, ContentHash: request.ContentHash, Size: request.Size,
 			Ctime: request.Ctime, Mtime: request.Mtime, UpdatedTimestamp: now.UnixMilli(), CreatedAt: now, UpdatedAt: now,
 		}).Error
@@ -600,6 +632,7 @@ func applyPreparedSafeFileRecord(tx *gorm.DB, resource *model.SyncResourceMetada
 		return err
 	}
 	file.Action = "modify"
+	file.FID = fid
 	file.Path = request.Path
 	file.PathHash = request.PathHash
 	file.ContentHash = request.ContentHash
@@ -879,7 +912,10 @@ func applySingleLegacyMutation(tx *gorm.DB, vaultID int64, resourceType domain.S
 	case domain.SyncResourceTypeFolder:
 		return applySafeFolderMutation(tx, vaultID, resource, request, create)
 	case domain.SyncResourceTypeFile:
-		return 0, errors.New("safe file mutations require upload commit")
+		if create || request.Action == "MODIFY" {
+			return 0, errors.New("safe file content mutations require upload commit")
+		}
+		return applySafeFileMutation(tx, vaultID, resource, request, create)
 	default:
 		return 0, fmt.Errorf("unsupported safe resource type: %s", resourceType)
 	}
@@ -899,6 +935,11 @@ func applySafeNoteMutation(tx *gorm.DB, vaultID int64, resource *model.SyncResou
 		note.Action = "delete"
 		note.Rename = 0
 	case "RENAME":
+		fid, err := safeLegacyParentFID(tx, vaultID, request.Path)
+		if err != nil {
+			return 0, err
+		}
+		note.FID = fid
 		note.Path = request.Path
 		note.PathHash = request.PathHash
 		note.Action = "modify"
@@ -909,12 +950,46 @@ func applySafeNoteMutation(tx *gorm.DB, vaultID int64, resource *model.SyncResou
 	return note.ID, tx.Save(&note).Error
 }
 
+func applySafeFileMutation(tx *gorm.DB, vaultID int64, resource *model.SyncResourceMetadata, request *dto.SafeMutationRequest, create bool) (int64, error) {
+	if create || request.Action == "MODIFY" {
+		return 0, errors.New("safe file content mutations require upload commit")
+	}
+	now := timex.Now()
+	var file model.File
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND vault_id = ?", resource.LegacyID, vaultID).Take(&file).Error; err != nil {
+		return 0, err
+	}
+	switch request.Action {
+	case "DELETE":
+		file.Action = "delete"
+		file.Rename = 0
+	case "RENAME":
+		fid, err := safeLegacyParentFID(tx, vaultID, request.Path)
+		if err != nil {
+			return 0, err
+		}
+		file.FID = fid
+		file.Path = request.Path
+		file.PathHash = request.PathHash
+		file.Action = "modify"
+		file.Rename = 0
+	}
+	file.UpdatedTimestamp = now.UnixMilli()
+	file.UpdatedAt = now
+	return file.ID, tx.Save(&file).Error
+}
+
 func applySafeFolderMutation(tx *gorm.DB, vaultID int64, resource *model.SyncResourceMetadata, request *dto.SafeMutationRequest, create bool) (int64, error) {
 	now := timex.Now()
+	fid, err := safeLegacyParentFID(tx, vaultID, request.Path)
+	if err != nil {
+		return 0, err
+	}
+	level := safeLegacyFolderLevel(request.Path)
 	if create {
 		folder := &model.Folder{
 			VaultID: vaultID, Action: "create", Path: request.Path, PathHash: request.PathHash,
-			Level: int64(strings.Count(request.Path, "/")), Ctime: request.Ctime, Mtime: request.Mtime,
+			Level: level, FID: fid, Ctime: request.Ctime, Mtime: request.Mtime,
 			UpdatedTimestamp: now.UnixMilli(), CreatedAt: now, UpdatedAt: now,
 		}
 		if err := tx.Create(folder).Error; err != nil {
@@ -928,6 +1003,8 @@ func applySafeFolderMutation(tx *gorm.DB, vaultID int64, resource *model.SyncRes
 	}
 	folder.Path = resource.CurrentPath
 	folder.PathHash = resource.CurrentPathHash
+	folder.Level = level
+	folder.FID = fid
 	folder.Action = "create"
 	if request.Action == "DELETE" {
 		folder.Action = "delete"
@@ -944,10 +1021,18 @@ func applyLegacyTreeMutation(tx *gorm.DB, resource *model.SyncResourceMetadata, 
 	}
 	if action == "DELETE" {
 		updates["action"] = "delete"
-	} else if resource.ResourceType == string(domain.SyncResourceTypeFolder) {
-		updates["action"] = "create"
 	} else {
-		updates["action"] = "modify"
+		fid, err := safeLegacyParentFID(tx, resource.VaultID, resource.CurrentPath)
+		if err != nil {
+			return err
+		}
+		updates["fid"] = fid
+		if resource.ResourceType == string(domain.SyncResourceTypeFolder) {
+			updates["action"] = "create"
+			updates["level"] = safeLegacyFolderLevel(resource.CurrentPath)
+		} else {
+			updates["action"] = "modify"
+		}
 	}
 	var target any
 	switch domain.SyncResourceType(resource.ResourceType) {
@@ -967,6 +1052,115 @@ func applyLegacyTreeMutation(tx *gorm.DB, resource *model.SyncResourceMetadata, 
 	}
 	if result.RowsAffected != 1 {
 		return fmt.Errorf("legacy %s resource %d was not updated", resource.ResourceType, resource.LegacyID)
+	}
+	return nil
+}
+
+func safeLegacyParentFID(tx *gorm.DB, vaultID int64, path string) (int64, error) {
+	parent := parentPath(strings.Trim(path, "/"))
+	if parent == "" {
+		return 0, nil
+	}
+	var folder model.Folder
+	err := tx.Where("vault_id = ? AND path = ? AND action <> ?", vaultID, parent, "delete").Order("id").Take(&folder).Error
+	if err != nil && !tx.Migrator().HasTable(&model.Folder{}) {
+		return 0, nil
+	}
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return 0, fmt.Errorf("live parent folder %q is missing", parent)
+	}
+	if err != nil {
+		return 0, err
+	}
+	return folder.ID, nil
+}
+
+func safeLegacyFolderLevel(path string) int64 {
+	path = strings.Trim(path, "/")
+	if path == "" {
+		return 0
+	}
+	return int64(strings.Count(path, "/") + 1)
+}
+
+func repairSafeLegacyHierarchy(tx *gorm.DB, vaultID int64) error {
+	if !tx.Migrator().HasTable(&model.Folder{}) {
+		return nil
+	}
+	var folders []model.Folder
+	if err := tx.Where("vault_id = ?", vaultID).Order("path, id").Find(&folders).Error; err != nil {
+		return err
+	}
+	canonicalFolderID := make(map[string]int64)
+	for _, folder := range folders {
+		if folder.Action == "delete" {
+			continue
+		}
+		if _, exists := canonicalFolderID[folder.Path]; !exists {
+			canonicalFolderID[folder.Path] = folder.ID
+		}
+	}
+	resolveParent := func(path string) (int64, error) {
+		parent := parentPath(strings.Trim(path, "/"))
+		if parent == "" {
+			return 0, nil
+		}
+		fid, exists := canonicalFolderID[parent]
+		if !exists {
+			return 0, fmt.Errorf("live parent folder %q is missing", parent)
+		}
+		return fid, nil
+	}
+	for _, folder := range folders {
+		if folder.Action == "delete" {
+			continue
+		}
+		fid, err := resolveParent(folder.Path)
+		if err != nil {
+			return err
+		}
+		level := safeLegacyFolderLevel(folder.Path)
+		if folder.FID == fid && folder.Level == level {
+			continue
+		}
+		if err := tx.Model(&model.Folder{}).Where("id = ? AND vault_id = ?", folder.ID, vaultID).
+			Updates(map[string]any{"fid": fid, "level": level}).Error; err != nil {
+			return err
+		}
+	}
+	if tx.Migrator().HasTable(&model.Note{}) {
+		var notes []model.Note
+		if err := tx.Where("vault_id = ? AND action <> ?", vaultID, "delete").Find(&notes).Error; err != nil {
+			return err
+		}
+		for _, note := range notes {
+			fid, err := resolveParent(note.Path)
+			if err != nil {
+				return err
+			}
+			if note.FID != fid {
+				if err := tx.Model(&model.Note{}).Where("id = ? AND vault_id = ?", note.ID, vaultID).UpdateColumn("fid", fid).Error; err != nil {
+					return err
+				}
+			}
+		}
+	}
+	if tx.Migrator().HasTable(&model.File{}) {
+		var files []model.File
+		if err := tx.Where("vault_id = ? AND action <> ?", vaultID, "delete").Find(&files).Error; err != nil {
+			return err
+		}
+		for _, file := range files {
+			fid, err := resolveParent(file.Path)
+			if err != nil {
+				return err
+			}
+			if file.FID != fid {
+				if err := tx.Model(&model.File{}).Where("id = ? AND vault_id = ?", file.ID, vaultID).UpdateColumn("fid", fid).Error; err != nil {
+					return err
+				}
+			}
+		}
 	}
 	return nil
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/haierkeys/fast-note-sync-service/pkg/code"
 	"github.com/haierkeys/fast-note-sync-service/pkg/util"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func configureSafeContentStorage(t *testing.T, coordinator *SafeMutationCoordinator) string {
@@ -113,6 +114,142 @@ func TestSafeMutationCoordinator_NoteIdempotencyAndRevisionConflict(t *testing.T
 	require.NotEqual(t, "delete", note.Action)
 	require.NoError(t, db.Model(&model.SyncEvent{}).Count(&eventCount).Error)
 	require.Equal(t, int64(2), eventCount)
+}
+
+func TestSafeMutationCoordinator_PersistsNestedLegacyHierarchy(t *testing.T) {
+	ctx := context.Background()
+	service, db := setupSafeSyncServiceTest(t, "postgres", true)
+	require.NoError(t, db.AutoMigrate(&model.Note{}, &model.File{}, &model.Folder{}))
+	require.NoError(t, db.Create(&model.VaultSyncState{VaultID: 52, State: "STRICT"}).Error)
+	coordinator := NewSafeMutationCoordinator(service.uow)
+	configureSafeContentStorage(t, coordinator)
+
+	createFolder := func(operationID, path string) *dto.SafeMutationResponse {
+		t.Helper()
+		result, err := coordinator.Mutate(ctx, 1, 52, domain.SyncResourceTypeFolder, &dto.SafeMutationRequest{
+			DeviceID: "device-a", OperationID: operationID, ExpectedPathState: "ABSENT", Action: "CREATE",
+			Path: path, PathHash: util.EncodeHash32(path), Ctime: 100, Mtime: 100,
+		})
+		require.NoError(t, err)
+		return result
+	}
+	english := createFolder("op-folder-english", "英语")
+	exercise := createFolder("op-folder-exercise", "英语/练习")
+	archive := createFolder("op-folder-archive", "归档")
+
+	noteContent := "nested note"
+	notePath := "英语/练习/2026-08-11.md"
+	noteResult, err := coordinator.Mutate(ctx, 1, 52, domain.SyncResourceTypeNote, &dto.SafeMutationRequest{
+		DeviceID: "device-a", OperationID: "op-note-nested", ExpectedPathState: "ABSENT", Action: "CREATE",
+		Path: notePath, PathHash: util.EncodeHash32(notePath), Content: noteContent,
+		ContentHash: util.EncodeHash32(noteContent), Size: int64(len(noteContent)), Ctime: 100, Mtime: 100,
+	})
+	require.NoError(t, err)
+
+	fileContent := []byte{1, 2, 3}
+	fileUpload := filepath.Join(t.TempDir(), "nested.upload")
+	require.NoError(t, os.WriteFile(fileUpload, fileContent, 0o600))
+	filePath := "英语/练习/附件.bin"
+	fileResult, err := coordinator.CommitFile(ctx, 1, 52, &dto.SafeMutationRequest{
+		DeviceID: "device-a", OperationID: "op-file-nested", ExpectedPathState: "ABSENT", Action: "CREATE",
+		Path: filePath, PathHash: util.EncodeHash32(filePath), ContentHash: util.EncodeHash32Bytes(fileContent),
+		Size: int64(len(fileContent)), Ctime: 100, Mtime: 100,
+	}, fileUpload)
+	require.NoError(t, err)
+
+	var englishFolder, exerciseFolder, archiveFolder model.Folder
+	require.NoError(t, db.Where("id = ?", legacyIDForResource(t, db, english.ResourceID)).Take(&englishFolder).Error)
+	require.NoError(t, db.Where("id = ?", legacyIDForResource(t, db, exercise.ResourceID)).Take(&exerciseFolder).Error)
+	require.NoError(t, db.Where("id = ?", legacyIDForResource(t, db, archive.ResourceID)).Take(&archiveFolder).Error)
+	require.Zero(t, englishFolder.FID)
+	require.Equal(t, int64(1), englishFolder.Level)
+	require.Equal(t, englishFolder.ID, exerciseFolder.FID)
+	require.Equal(t, int64(2), exerciseFolder.Level)
+
+	var note model.Note
+	var file model.File
+	require.NoError(t, db.Where("id = ?", legacyIDForResource(t, db, noteResult.ResourceID)).Take(&note).Error)
+	require.NoError(t, db.Where("id = ?", legacyIDForResource(t, db, fileResult.ResourceID)).Take(&file).Error)
+	require.Equal(t, exerciseFolder.ID, note.FID)
+	require.Equal(t, exerciseFolder.ID, file.FID)
+
+	renamedRoot := "归档/练习"
+	_, err = coordinator.Mutate(ctx, 1, 52, domain.SyncResourceTypeFolder, &dto.SafeMutationRequest{
+		DeviceID: "device-a", OperationID: "op-folder-move", ResourceID: exercise.ResourceID,
+		BaseRevision: 1, ExpectedPathState: "PRESENT", Action: "RENAME",
+		PreviousPath: "英语/练习", PreviousPathHash: util.EncodeHash32("英语/练习"),
+		Path: renamedRoot, PathHash: util.EncodeHash32(renamedRoot),
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.Where("id = ?", exerciseFolder.ID).Take(&exerciseFolder).Error)
+	require.NoError(t, db.Where("id = ?", note.ID).Take(&note).Error)
+	require.NoError(t, db.Where("id = ?", file.ID).Take(&file).Error)
+	require.Equal(t, archiveFolder.ID, exerciseFolder.FID)
+	require.Equal(t, int64(2), exerciseFolder.Level)
+	require.Equal(t, "归档/练习/2026-08-11.md", note.Path)
+	require.Equal(t, exerciseFolder.ID, note.FID)
+	require.Equal(t, "归档/练习/附件.bin", file.Path)
+	require.Equal(t, exerciseFolder.ID, file.FID)
+
+	noteTarget := "归档/2026-08-11.md"
+	_, err = coordinator.Mutate(ctx, 1, 52, domain.SyncResourceTypeNote, &dto.SafeMutationRequest{
+		DeviceID: "device-a", OperationID: "op-note-move", ResourceID: noteResult.ResourceID,
+		BaseRevision: 2, BaseHash: util.EncodeHash32(noteContent), ExpectedPathState: "PRESENT", Action: "RENAME",
+		PreviousPath: note.Path, PreviousPathHash: util.EncodeHash32(note.Path), Path: noteTarget, PathHash: util.EncodeHash32(noteTarget),
+	})
+	require.NoError(t, err)
+	fileTarget := "归档/附件.bin"
+	_, err = coordinator.Mutate(ctx, 1, 52, domain.SyncResourceTypeFile, &dto.SafeMutationRequest{
+		DeviceID: "device-a", OperationID: "op-file-move", ResourceID: fileResult.ResourceID,
+		BaseRevision: 2, BaseHash: util.EncodeHash32Bytes(fileContent), ExpectedPathState: "PRESENT", Action: "RENAME",
+		PreviousPath: file.Path, PreviousPathHash: util.EncodeHash32(file.Path), Path: fileTarget, PathHash: util.EncodeHash32(fileTarget),
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.Where("id = ?", note.ID).Take(&note).Error)
+	require.NoError(t, db.Where("id = ?", file.ID).Take(&file).Error)
+	require.Equal(t, archiveFolder.ID, note.FID)
+	require.Equal(t, archiveFolder.ID, file.FID)
+}
+
+func TestSafeMutationCoordinator_RepairsExistingLegacyHierarchy(t *testing.T) {
+	ctx := context.Background()
+	service, db := setupSafeSyncServiceTest(t, "postgres", true)
+	require.NoError(t, db.AutoMigrate(&model.Note{}, &model.File{}, &model.Folder{}))
+	require.NoError(t, db.Create(&model.VaultSyncState{VaultID: 53, State: "STRICT"}).Error)
+	require.NoError(t, db.Create(&model.VaultSyncState{VaultID: 54, State: "OFF"}).Error)
+
+	root := model.Folder{ID: 10, VaultID: 53, Action: "create", Path: "英语", PathHash: util.EncodeHash32("英语"), FID: 99}
+	child := model.Folder{ID: 11, VaultID: 53, Action: "create", Path: "英语/练习", PathHash: util.EncodeHash32("英语/练习"), FID: 0}
+	note := model.Note{ID: 12, VaultID: 53, Action: "create", Path: "英语/练习/a.md", PathHash: util.EncodeHash32("英语/练习/a.md"), FID: 0}
+	file := model.File{ID: 13, VaultID: 53, Action: "create", Path: "英语/练习/a.bin", PathHash: util.EncodeHash32("英语/练习/a.bin"), FID: 0}
+	offFolder := model.Folder{ID: 20, VaultID: 54, Action: "create", Path: "off", PathHash: util.EncodeHash32("off"), FID: 99}
+	require.NoError(t, db.Create(&root).Error)
+	require.NoError(t, db.Create(&child).Error)
+	require.NoError(t, db.Create(&note).Error)
+	require.NoError(t, db.Create(&file).Error)
+	require.NoError(t, db.Create(&offFolder).Error)
+
+	coordinator := NewSafeMutationCoordinator(service.uow)
+	require.NoError(t, coordinator.RepairLegacyHierarchy(ctx, 1))
+	require.NoError(t, db.Where("id = ?", root.ID).Take(&root).Error)
+	require.NoError(t, db.Where("id = ?", child.ID).Take(&child).Error)
+	require.NoError(t, db.Where("id = ?", note.ID).Take(&note).Error)
+	require.NoError(t, db.Where("id = ?", file.ID).Take(&file).Error)
+	require.NoError(t, db.Where("id = ?", offFolder.ID).Take(&offFolder).Error)
+	require.Zero(t, root.FID)
+	require.Equal(t, int64(1), root.Level)
+	require.Equal(t, root.ID, child.FID)
+	require.Equal(t, int64(2), child.Level)
+	require.Equal(t, child.ID, note.FID)
+	require.Equal(t, child.ID, file.FID)
+	require.Equal(t, int64(99), offFolder.FID)
+}
+
+func legacyIDForResource(t *testing.T, db *gorm.DB, resourceID string) int64 {
+	t.Helper()
+	var resource model.SyncResourceMetadata
+	require.NoError(t, db.Where("resource_id = ?", resourceID).Take(&resource).Error)
+	return resource.LegacyID
 }
 
 func TestSafeMutationFingerprintIgnoresTransportContext(t *testing.T) {
