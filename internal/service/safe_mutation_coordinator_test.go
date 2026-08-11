@@ -51,7 +51,9 @@ func TestSafeMutationCoordinator_NoteIdempotencyAndRevisionConflict(t *testing.T
 	require.Equal(t, int64(1), created.ResourceRevision)
 	require.Equal(t, int64(1), created.VaultRevision)
 
-	replayed, err := coordinator.Mutate(ctx, 1, 42, domain.SyncResourceTypeNote, create)
+	replayRequest := *create
+	replayRequest.Context = "a-new-websocket-request-context"
+	replayed, err := coordinator.Mutate(ctx, 1, 42, domain.SyncResourceTypeNote, &replayRequest)
 	require.NoError(t, err)
 	require.Equal(t, created.ResourceID, replayed.ResourceID)
 	require.Equal(t, created.VaultRevision, replayed.VaultRevision)
@@ -92,6 +94,29 @@ func TestSafeMutationCoordinator_NoteIdempotencyAndRevisionConflict(t *testing.T
 	require.NotEqual(t, "delete", note.Action)
 	require.NoError(t, db.Model(&model.SyncEvent{}).Count(&eventCount).Error)
 	require.Equal(t, int64(2), eventCount)
+}
+
+func TestSafeMutationFingerprintIgnoresTransportContext(t *testing.T) {
+	request := &dto.SafeMutationRequest{
+		Context: "first", DeviceID: "device-a", OperationID: "op-a", ExpectedPathState: "ABSENT",
+		Action: "CREATE", Path: "notes/a.md", PathHash: util.EncodeHash32("notes/a.md"),
+		Content: "one", ContentHash: util.EncodeHash32("one"), Size: 3,
+	}
+	first, err := safeMutationFingerprint(42, domain.SyncResourceTypeNote, request)
+	require.NoError(t, err)
+	request.Context = "second"
+	second, err := safeMutationFingerprint(42, domain.SyncResourceTypeNote, request)
+	require.NoError(t, err)
+	require.Equal(t, first, second)
+}
+
+func TestReplayRejectedOperationPreservesOriginalErrorAcrossLegacyFingerprint(t *testing.T) {
+	operation := &model.SyncOperation{
+		State: "REJECTED", RequestFingerprint: "legacy-context-fingerprint",
+		ErrorCode: string(domain.SafeSyncErrorPathStateConflict), ExpiresAt: time.Now().Add(time.Hour),
+	}
+	_, err := replaySafeSyncOperation(operation, "normalized-fingerprint", time.Now())
+	require.Equal(t, domain.SafeSyncErrorPathStateConflict, safeSyncErrorCode(err))
 }
 
 func TestSafeMutationCoordinator_RejectsInvalidNoteContentMetadata(t *testing.T) {

@@ -927,11 +927,13 @@ func requireStrictVaultTransaction(tx *gorm.DB, vaultID int64) error {
 }
 
 func safeMutationFingerprint(vaultID int64, resourceType domain.SyncResourceType, request *dto.SafeMutationRequest) (string, error) {
+	fingerprintRequest := *request
+	fingerprintRequest.Context = ""
 	payload, err := json.Marshal(struct {
 		VaultID      int64
 		ResourceType domain.SyncResourceType
 		Request      *dto.SafeMutationRequest
-	}{VaultID: vaultID, ResourceType: resourceType, Request: request})
+	}{VaultID: vaultID, ResourceType: resourceType, Request: &fingerprintRequest})
 	if err != nil {
 		return "", err
 	}
@@ -950,6 +952,9 @@ func findSafeSyncOperation(tx *gorm.DB, vaultID int64, deviceID, operationID str
 }
 
 func replaySafeSyncOperation(operation *model.SyncOperation, fingerprint string, now time.Time) (*dto.SafeMutationResponse, error) {
+	if operation.State == string(domain.SyncOperationStateRejected) {
+		return nil, newSafeSyncError(domain.SafeSyncErrorCode(operation.ErrorCode), "operation was previously rejected")
+	}
 	if operation.RequestFingerprint != fingerprint {
 		return nil, newSafeSyncError(domain.SafeSyncErrorOperationIDReused, "operationId is bound to a different request")
 	}
@@ -963,8 +968,6 @@ func replaySafeSyncOperation(operation *model.SyncOperation, fingerprint string,
 			VaultRevision: operation.VaultRevision, ContentHash: operation.ContentHash, Outcome: operation.Outcome,
 			Replayed: true,
 		}, nil
-	case string(domain.SyncOperationStateRejected):
-		return nil, newSafeSyncError(domain.SafeSyncErrorCode(operation.ErrorCode), "operation was previously rejected")
 	default:
 		return nil, newSafeSyncError(domain.SafeSyncErrorBootstrapStateConflict, "operation is still prepared")
 	}
