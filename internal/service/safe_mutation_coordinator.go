@@ -31,12 +31,13 @@ type SafeMutationCoordinator struct {
 	stagerMu    sync.Mutex
 	vaultLocks  sync.Map
 	filePath    func(uid, fileID int64) string
+	notePath    func(uid, noteID int64) string
 	now         func() time.Time
 }
 
 func NewSafeMutationCoordinator(uow *dao.SafeSyncUnitOfWork, guards ...*StrictVaultWriteGuard) *SafeMutationCoordinator {
 	coordinator := &SafeMutationCoordinator{
-		uow: uow, filePath: uow.FileContentPath,
+		uow: uow, filePath: uow.FileContentPath, notePath: uow.NoteContentPath,
 		now: func() time.Time { return time.Now().UTC() },
 	}
 	if len(guards) > 0 {
@@ -63,6 +64,9 @@ func (c *SafeMutationCoordinator) Mutate(ctx context.Context, uid, vaultID int64
 	fingerprint, err := safeMutationFingerprint(vaultID, resourceType, request)
 	if err != nil {
 		return nil, err
+	}
+	if resourceType == domain.SyncResourceTypeNote && (request.Action == "CREATE" || request.Action == "MODIFY") {
+		return c.commitContentMutation(ctx, uid, vaultID, resourceType, request, []byte(request.Content), fingerprint)
 	}
 
 	var result *dto.SafeMutationResponse
@@ -151,7 +155,7 @@ func (c *SafeMutationCoordinator) CommitFile(ctx context.Context, uid, vaultID i
 	if err != nil {
 		return nil, err
 	}
-	if replayed, found, err := c.replayExistingFileOperation(ctx, uid, vaultID, request, fingerprint); err != nil {
+	if replayed, found, err := c.replayExistingContentOperation(ctx, uid, vaultID, request, fingerprint); err != nil {
 		return nil, err
 	} else if found {
 		return replayed, nil
@@ -166,12 +170,30 @@ func (c *SafeMutationCoordinator) CommitFile(ctx context.Context, uid, vaultID i
 	if !matchesSafeContentHash(content, request.ContentHash) {
 		return nil, newSafeSyncError(domain.SafeSyncErrorPathStateConflict, "uploaded file hash does not match commit")
 	}
+	return c.commitContentMutation(ctx, uid, vaultID, domain.SyncResourceTypeFile, request, content, fingerprint)
+}
+
+func (c *SafeMutationCoordinator) commitContentMutation(
+	ctx context.Context,
+	uid, vaultID int64,
+	resourceType domain.SyncResourceType,
+	request *dto.SafeMutationRequest,
+	content []byte,
+	fingerprint string,
+) (*dto.SafeMutationResponse, error) {
+	if resourceType != domain.SyncResourceTypeNote && resourceType != domain.SyncResourceTypeFile {
+		return nil, fmt.Errorf("unsupported safe content resource type: %s", resourceType)
+	}
+	if request.Action != "CREATE" && request.Action != "MODIFY" {
+		return nil, errors.New("safe content mutation only supports create or modify")
+	}
 	stager, err := c.contentStager()
 	if err != nil {
 		return nil, err
 	}
 
 	var prepared *model.SyncOperation
+	var newlyStaged *StagedContent
 	var result *dto.SafeMutationResponse
 	var terminalErr error
 	err = c.uow.Transaction(ctx, uid, func(tx *gorm.DB) error {
@@ -204,48 +226,50 @@ func (c *SafeMutationCoordinator) CommitFile(ctx context.Context, uid, vaultID i
 			return nil
 		}
 
-		resource, create, err := prepareSingleSafeResource(tx, vaultID, domain.SyncResourceTypeFile, request)
+		resource, create, err := prepareSingleSafeResource(tx, vaultID, resourceType, request)
 		if err != nil {
 			var safeErr *domain.SafeSyncError
 			if !errors.As(err, &safeErr) {
 				return err
 			}
 			terminalErr = err
-			return createRejectedSafeSyncOperation(tx, vaultID, request, domain.SyncResourceTypeFile, fingerprint, safeErr.Code, c.now())
+			return createRejectedSafeSyncOperation(tx, vaultID, request, resourceType, fingerprint, safeErr.Code, c.now())
 		}
 		legacyID := resource.LegacyID
 		if create {
-			legacyID, err = reserveSafeFileLegacyID(tx)
+			legacyID, err = reserveSafeContentLegacyID(tx, resourceType)
 			if err != nil {
 				return err
 			}
 		}
-		targetPath := c.filePath(uid, legacyID)
+		targetPath, err := c.contentTargetPath(uid, resourceType, legacyID)
+		if err != nil {
+			return err
+		}
 		staged, err := stager.Stage(ctx, request.OperationID, targetPath, content, request.ContentHash)
 		if err != nil {
 			return err
 		}
+		newlyStaged = staged
 		payload, err := json.Marshal(request)
 		if err != nil {
-			_ = stager.Finalize(staged)
 			return err
 		}
 		prepared = &model.SyncOperation{
 			VaultID: vaultID, DeviceID: request.DeviceID, OperationID: request.OperationID,
-			Action: "FILE:" + request.Action, RequestFingerprint: fingerprint,
+			Action: string(resourceType) + ":" + request.Action, RequestFingerprint: fingerprint,
 			State: string(domain.SyncOperationStatePrepared), ResourceID: resource.ResourceID,
 			LegacyID: legacyID, RequestPayload: string(payload), StagedPath: staged.StagedPath,
 			OldImagePath: staged.OldImagePath, TargetPath: staged.TargetPath,
 			ExpectedHash: staged.ExpectedHash, TargetExisted: staged.TargetExisted,
 			ExpiresAt: c.now().Add(model.SafeSyncOperationRetention),
 		}
-		if err := tx.Create(prepared).Error; err != nil {
-			_ = stager.Finalize(staged)
-			return err
-		}
-		return nil
+		return tx.Create(prepared).Error
 	})
 	if err != nil {
+		if newlyStaged != nil {
+			_ = stager.Finalize(newlyStaged)
+		}
 		return nil, err
 	}
 	if terminalErr != nil {
@@ -255,14 +279,14 @@ func (c *SafeMutationCoordinator) CommitFile(ctx context.Context, uid, vaultID i
 		return result, nil
 	}
 	if prepared == nil {
-		return nil, errors.New("safe file operation was not prepared")
+		return nil, errors.New("safe content operation was not prepared")
 	}
 
 	staged := stagedContentFromOperation(prepared)
 	if err := stager.Apply(ctx, staged); err != nil {
 		return nil, err
 	}
-	result, err = c.commitPreparedFile(ctx, uid, prepared)
+	result, err = c.commitPreparedContent(ctx, uid, prepared)
 	if err != nil {
 		_, _ = stager.Recover(context.Background(), staged)
 		return nil, err
@@ -273,7 +297,30 @@ func (c *SafeMutationCoordinator) CommitFile(ctx context.Context, uid, vaultID i
 	return result, nil
 }
 
-func (c *SafeMutationCoordinator) replayExistingFileOperation(ctx context.Context, uid, vaultID int64, request *dto.SafeMutationRequest, fingerprint string) (*dto.SafeMutationResponse, bool, error) {
+func (c *SafeMutationCoordinator) contentTargetPath(uid int64, resourceType domain.SyncResourceType, legacyID int64) (string, error) {
+	switch resourceType {
+	case domain.SyncResourceTypeNote:
+		return c.notePath(uid, legacyID), nil
+	case domain.SyncResourceTypeFile:
+		return c.filePath(uid, legacyID), nil
+	default:
+		return "", fmt.Errorf("unsupported safe content resource type: %s", resourceType)
+	}
+}
+
+func preparedContentResourceType(action string) (domain.SyncResourceType, error) {
+	prefix, mutation, found := strings.Cut(action, ":")
+	if !found || (mutation != "CREATE" && mutation != "MODIFY") {
+		return "", fmt.Errorf("unsupported prepared safe sync action %q", action)
+	}
+	resourceType := domain.SyncResourceType(prefix)
+	if resourceType != domain.SyncResourceTypeNote && resourceType != domain.SyncResourceTypeFile {
+		return "", fmt.Errorf("unsupported prepared safe sync action %q", action)
+	}
+	return resourceType, nil
+}
+
+func (c *SafeMutationCoordinator) replayExistingContentOperation(ctx context.Context, uid, vaultID int64, request *dto.SafeMutationRequest, fingerprint string) (*dto.SafeMutationResponse, bool, error) {
 	var result *dto.SafeMutationResponse
 	var found bool
 	var terminalErr error
@@ -336,7 +383,7 @@ func (c *SafeMutationCoordinator) recoverPreparedVault(ctx context.Context, uid,
 	}
 	for index := range operations {
 		operation := &operations[index]
-		if !strings.HasPrefix(operation.Action, "FILE:") {
+		if _, err := preparedContentResourceType(operation.Action); err != nil {
 			return fmt.Errorf("unsupported prepared safe sync operation %d", operation.ID)
 		}
 		staged := stagedContentFromOperation(operation)
@@ -346,11 +393,11 @@ func (c *SafeMutationCoordinator) recoverPreparedVault(ctx context.Context, uid,
 		}
 		switch recovery {
 		case SafeContentRecoveryApplied:
-			if _, err := c.commitPreparedFile(ctx, uid, operation); err != nil {
+			if _, err := c.commitPreparedContent(ctx, uid, operation); err != nil {
 				return err
 			}
 		case SafeContentRecoveryRestored:
-			if err := c.discardPreparedFile(ctx, uid, operation.ID); err != nil {
+			if err := c.discardPreparedContent(ctx, uid, operation.ID); err != nil {
 				return err
 			}
 		default:
@@ -363,7 +410,7 @@ func (c *SafeMutationCoordinator) recoverPreparedVault(ctx context.Context, uid,
 	return nil
 }
 
-func (c *SafeMutationCoordinator) discardPreparedFile(ctx context.Context, uid, operationID int64) error {
+func (c *SafeMutationCoordinator) discardPreparedContent(ctx context.Context, uid, operationID int64) error {
 	return c.uow.Transaction(ctx, uid, func(tx *gorm.DB) error {
 		result := tx.Where("id = ? AND state = ?", operationID, string(domain.SyncOperationStatePrepared)).
 			Delete(&model.SyncOperation{})
@@ -371,7 +418,7 @@ func (c *SafeMutationCoordinator) discardPreparedFile(ctx context.Context, uid, 
 			return result.Error
 		}
 		if result.RowsAffected != 1 {
-			return errors.New("prepared file operation was not discarded")
+			return errors.New("prepared content operation was not discarded")
 		}
 		return nil
 	})
@@ -398,13 +445,17 @@ func (c *SafeMutationCoordinator) contentStager() (*SafeContentStager, error) {
 	return stager, nil
 }
 
-func (c *SafeMutationCoordinator) commitPreparedFile(ctx context.Context, uid int64, prepared *model.SyncOperation) (*dto.SafeMutationResponse, error) {
+func (c *SafeMutationCoordinator) commitPreparedContent(ctx context.Context, uid int64, prepared *model.SyncOperation) (*dto.SafeMutationResponse, error) {
+	resourceType, err := preparedContentResourceType(prepared.Action)
+	if err != nil {
+		return nil, err
+	}
 	var request dto.SafeMutationRequest
 	if err := json.Unmarshal([]byte(prepared.RequestPayload), &request); err != nil {
 		return nil, err
 	}
 	var result *dto.SafeMutationResponse
-	err := c.uow.Transaction(ctx, uid, func(tx *gorm.DB) error {
+	err = c.uow.Transaction(ctx, uid, func(tx *gorm.DB) error {
 		var operation model.SyncOperation
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", prepared.ID).Take(&operation).Error; err != nil {
 			return err
@@ -414,21 +465,21 @@ func (c *SafeMutationCoordinator) commitPreparedFile(ctx context.Context, uid in
 			result, err = replaySafeSyncOperation(&operation, prepared.RequestFingerprint, c.now())
 			return err
 		}
-		if operation.State != string(domain.SyncOperationStatePrepared) || operation.RequestFingerprint != prepared.RequestFingerprint {
-			return newSafeSyncError(domain.SafeSyncErrorOperationIDReused, "prepared file operation changed")
+		if operation.State != string(domain.SyncOperationStatePrepared) || operation.RequestFingerprint != prepared.RequestFingerprint || operation.Action != prepared.Action {
+			return newSafeSyncError(domain.SafeSyncErrorOperationIDReused, "prepared content operation changed")
 		}
 		if !matchesFileHash(operation.TargetPath, operation.ExpectedHash) {
-			return errors.New("prepared file content is not applied")
+			return errors.New("prepared content is not applied")
 		}
 		if err := requireStrictVaultTransaction(tx, operation.VaultID); err != nil {
 			return err
 		}
 
-		resource, create, err := preparePreparedSafeFileResource(tx, operation.VaultID, &request, &operation)
+		resource, create, err := preparePreparedSafeContentResource(tx, operation.VaultID, resourceType, &request, &operation)
 		if err != nil {
 			return err
 		}
-		if err := applyPreparedSafeFileRecord(tx, resource, &request, create); err != nil {
+		if err := applyPreparedSafeContentRecord(tx, resourceType, resource, &request, create); err != nil {
 			return err
 		}
 		if create {
@@ -453,27 +504,28 @@ func (c *SafeMutationCoordinator) commitPreparedFile(ctx context.Context, uid in
 		updates := map[string]any{
 			"state": string(domain.SyncOperationStateCommitted), "resource_revision": result.ResourceRevision,
 			"vault_revision": result.VaultRevision, "content_hash": result.ContentHash, "outcome": result.Outcome,
+			"request_payload": "", "staged_path": "", "old_image_path": "", "target_path": "", "expected_hash": "",
 		}
 		changed := tx.Model(&model.SyncOperation{}).Where("id = ? AND state = ?", operation.ID, string(domain.SyncOperationStatePrepared)).Updates(updates)
 		if changed.Error != nil {
 			return changed.Error
 		}
 		if changed.RowsAffected != 1 {
-			return errors.New("prepared file operation was not committed")
+			return errors.New("prepared content operation was not committed")
 		}
 		return nil
 	})
 	return result, err
 }
 
-func preparePreparedSafeFileResource(tx *gorm.DB, vaultID int64, request *dto.SafeMutationRequest, operation *model.SyncOperation) (*model.SyncResourceMetadata, bool, error) {
+func preparePreparedSafeContentResource(tx *gorm.DB, vaultID int64, resourceType domain.SyncResourceType, request *dto.SafeMutationRequest, operation *model.SyncOperation) (*model.SyncResourceMetadata, bool, error) {
 	if request.Action != "CREATE" {
-		resource, _, err := prepareSingleSafeResource(tx, vaultID, domain.SyncResourceTypeFile, request)
+		resource, _, err := prepareSingleSafeResource(tx, vaultID, resourceType, request)
 		if err != nil {
 			return nil, false, err
 		}
 		if resource.LegacyID != operation.LegacyID || resource.ResourceID != operation.ResourceID {
-			return nil, false, newSafeSyncError(domain.SafeSyncErrorPathStateConflict, "prepared file resource identity changed")
+			return nil, false, newSafeSyncError(domain.SafeSyncErrorPathStateConflict, "prepared content resource identity changed")
 		}
 		return resource, false, nil
 	}
@@ -488,11 +540,50 @@ func preparePreparedSafeFileResource(tx *gorm.DB, vaultID int64, request *dto.Sa
 		return nil, false, newSafeSyncError(domain.SafeSyncErrorPathStateConflict, "create target path is live")
 	}
 	return &model.SyncResourceMetadata{
-		ResourceID: operation.ResourceID, VaultID: vaultID, ResourceType: string(domain.SyncResourceTypeFile),
+		ResourceID: operation.ResourceID, VaultID: vaultID, ResourceType: string(resourceType),
 		LegacyID: operation.LegacyID, ResourceRevision: 1, CurrentPath: request.Path,
 		CurrentPathHash: request.PathHash, ContentHash: request.ContentHash,
 		State: string(domain.SyncResourceStateLive), Size: request.Size,
 	}, true, nil
+}
+
+func applyPreparedSafeContentRecord(tx *gorm.DB, resourceType domain.SyncResourceType, resource *model.SyncResourceMetadata, request *dto.SafeMutationRequest, create bool) error {
+	switch resourceType {
+	case domain.SyncResourceTypeNote:
+		return applyPreparedSafeNoteRecord(tx, resource, request, create)
+	case domain.SyncResourceTypeFile:
+		return applyPreparedSafeFileRecord(tx, resource, request, create)
+	default:
+		return fmt.Errorf("unsupported prepared content resource type: %s", resourceType)
+	}
+}
+
+func applyPreparedSafeNoteRecord(tx *gorm.DB, resource *model.SyncResourceMetadata, request *dto.SafeMutationRequest, create bool) error {
+	now := timex.Now()
+	if create {
+		return tx.Create(&model.Note{
+			ID: resource.LegacyID, VaultID: resource.VaultID, Action: "create", Path: request.Path,
+			PathHash: request.PathHash, Content: "", ContentHash: request.ContentHash, Version: 1, Size: request.Size,
+			Ctime: request.Ctime, Mtime: request.Mtime, UpdatedTimestamp: now.UnixMilli(), CreatedAt: now, UpdatedAt: now,
+		}).Error
+	}
+	var note model.Note
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND vault_id = ?", resource.LegacyID, resource.VaultID).Take(&note).Error; err != nil {
+		return err
+	}
+	note.Action = "modify"
+	note.Path = request.Path
+	note.PathHash = request.PathHash
+	note.Content = ""
+	note.ContentHash = request.ContentHash
+	note.Size = request.Size
+	note.Ctime = request.Ctime
+	note.Mtime = request.Mtime
+	note.Version++
+	note.Rename = 0
+	note.UpdatedTimestamp = now.UnixMilli()
+	note.UpdatedAt = now
+	return tx.Save(&note).Error
 }
 
 func applyPreparedSafeFileRecord(tx *gorm.DB, resource *model.SyncResourceMetadata, request *dto.SafeMutationRequest, create bool) error {
@@ -530,6 +621,31 @@ func ensureNoPreparedVaultOperation(tx *gorm.DB, vaultID int64) error {
 		return newSafeSyncError(domain.SafeSyncErrorBootstrapStateConflict, "a prepared operation requires recovery")
 	}
 	return nil
+}
+
+func reserveSafeContentLegacyID(tx *gorm.DB, resourceType domain.SyncResourceType) (int64, error) {
+	switch resourceType {
+	case domain.SyncResourceTypeNote:
+		return reserveSafeNoteLegacyID(tx)
+	case domain.SyncResourceTypeFile:
+		return reserveSafeFileLegacyID(tx)
+	default:
+		return 0, fmt.Errorf("unsupported safe content resource type: %s", resourceType)
+	}
+}
+
+func reserveSafeNoteLegacyID(tx *gorm.DB) (int64, error) {
+	var id int64
+	if tx.Dialector.Name() == "postgres" {
+		if err := tx.Raw("SELECT nextval(pg_get_serial_sequence('note', 'id'))").Scan(&id).Error; err != nil {
+			return 0, err
+		}
+		return id, nil
+	}
+	if err := tx.Model(&model.Note{}).Select("COALESCE(MAX(id), 0) + 1").Scan(&id).Error; err != nil {
+		return 0, err
+	}
+	return id, nil
 }
 
 func reserveSafeFileLegacyID(tx *gorm.DB) (int64, error) {
@@ -756,6 +872,9 @@ func prepareSingleSafeResource(tx *gorm.DB, vaultID int64, resourceType domain.S
 func applySingleLegacyMutation(tx *gorm.DB, vaultID int64, resourceType domain.SyncResourceType, resource *model.SyncResourceMetadata, request *dto.SafeMutationRequest, create bool) (int64, error) {
 	switch resourceType {
 	case domain.SyncResourceTypeNote:
+		if create || request.Action == "MODIFY" {
+			return 0, errors.New("safe note content mutations require prepared content")
+		}
 		return applySafeNoteMutation(tx, vaultID, resource, request, create)
 	case domain.SyncResourceTypeFolder:
 		return applySafeFolderMutation(tx, vaultID, resource, request, create)
@@ -768,31 +887,14 @@ func applySingleLegacyMutation(tx *gorm.DB, vaultID int64, resourceType domain.S
 
 func applySafeNoteMutation(tx *gorm.DB, vaultID int64, resource *model.SyncResourceMetadata, request *dto.SafeMutationRequest, create bool) (int64, error) {
 	now := timex.Now()
-	if create {
-		note := &model.Note{
-			VaultID: vaultID, Action: "create", Path: request.Path, PathHash: request.PathHash,
-			Content: request.Content, ContentHash: request.ContentHash, Version: 1, Size: int64(len(request.Content)),
-			Ctime: request.Ctime, Mtime: request.Mtime, UpdatedTimestamp: now.UnixMilli(), CreatedAt: now, UpdatedAt: now,
-		}
-		if err := tx.Create(note).Error; err != nil {
-			return 0, err
-		}
-		resource.Size = note.Size
-		return note.ID, nil
+	if create || request.Action == "MODIFY" {
+		return 0, errors.New("safe note content mutations require prepared content")
 	}
 	var note model.Note
 	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND vault_id = ?", resource.LegacyID, vaultID).Take(&note).Error; err != nil {
 		return 0, err
 	}
 	switch request.Action {
-	case "MODIFY":
-		note.Content = request.Content
-		note.ContentHash = request.ContentHash
-		note.Size = int64(len(request.Content))
-		note.Ctime = request.Ctime
-		note.Mtime = request.Mtime
-		note.Version++
-		note.Action = "modify"
 	case "DELETE":
 		note.Action = "delete"
 		note.Rename = 0

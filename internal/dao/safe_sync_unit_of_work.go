@@ -36,6 +36,10 @@ func (u *SafeSyncUnitOfWork) FileContentPath(uid, fileID int64) string {
 	return filepath.Join(u.dao.GetFileFolderPath(uid, fileID), "file.dat")
 }
 
+func (u *SafeSyncUnitOfWork) NoteContentPath(uid, noteID int64) string {
+	return filepath.Join(u.dao.GetNoteFolderPath(uid, noteID), "content.txt")
+}
+
 func init() {
 	RegisterModel(ModelConfig{
 		Name: "SafeSync",

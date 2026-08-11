@@ -17,6 +17,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func configureSafeContentStorage(t *testing.T, coordinator *SafeMutationCoordinator) string {
+	t.Helper()
+	volumeRoot := t.TempDir()
+	stager, err := NewSafeContentStager(filepath.Join(volumeRoot, ".safe-sync-staging"), volumeRoot)
+	require.NoError(t, err)
+	coordinator.stager = stager
+	coordinator.filePath = func(_, fileID int64) string {
+		return filepath.Join(volumeRoot, "files", strconv.FormatInt(fileID, 10), "file.dat")
+	}
+	coordinator.notePath = func(_, noteID int64) string {
+		return filepath.Join(volumeRoot, "notes", strconv.FormatInt(noteID, 10), "content.txt")
+	}
+	return volumeRoot
+}
+
 func TestStrictVaultWriteGuard_FailsClosedOnlyForEnabledVaults(t *testing.T) {
 	ctx := context.Background()
 	service, db := setupSafeSyncServiceTest(t, "postgres", true)
@@ -39,6 +54,7 @@ func TestSafeMutationCoordinator_NoteIdempotencyAndRevisionConflict(t *testing.T
 	require.NoError(t, db.AutoMigrate(&model.Note{}))
 	require.NoError(t, db.Create(&model.VaultSyncState{VaultID: 42, State: "STRICT"}).Error)
 	coordinator := NewSafeMutationCoordinator(service.uow)
+	configureSafeContentStorage(t, coordinator)
 
 	create := &dto.SafeMutationRequest{
 		DeviceID: "device-a", OperationID: "op-create", ExpectedPathState: "ABSENT", Action: "CREATE",
@@ -90,7 +106,10 @@ func TestSafeMutationCoordinator_NoteIdempotencyAndRevisionConflict(t *testing.T
 
 	var note model.Note
 	require.NoError(t, db.Where("vault_id = ? AND path = ?", 42, create.Path).Take(&note).Error)
-	require.Equal(t, "two", note.Content)
+	require.Empty(t, note.Content)
+	content, err := os.ReadFile(coordinator.notePath(1, note.ID))
+	require.NoError(t, err)
+	require.Equal(t, []byte("two"), content)
 	require.NotEqual(t, "delete", note.Action)
 	require.NoError(t, db.Model(&model.SyncEvent{}).Count(&eventCount).Error)
 	require.Equal(t, int64(2), eventCount)
@@ -125,6 +144,7 @@ func TestSafeMutationCoordinator_RejectsInvalidNoteContentMetadata(t *testing.T)
 	require.NoError(t, db.AutoMigrate(&model.Note{}))
 	require.NoError(t, db.Create(&model.VaultSyncState{VaultID: 49, State: "STRICT"}).Error)
 	coordinator := NewSafeMutationCoordinator(service.uow)
+	configureSafeContentStorage(t, coordinator)
 
 	request := &dto.SafeMutationRequest{
 		DeviceID: "device-a", OperationID: "invalid-note", ExpectedPathState: "ABSENT", Action: "CREATE",
@@ -142,8 +162,13 @@ func TestSafeMutationCoordinator_RejectsInvalidNoteContentMetadata(t *testing.T)
 
 	request.OperationID = "valid-unicode-note"
 	request.Size = int64(len([]byte(request.Content)))
-	_, err = coordinator.Mutate(ctx, 1, 49, domain.SyncResourceTypeNote, request)
+	created, err := coordinator.Mutate(ctx, 1, 49, domain.SyncResourceTypeNote, request)
 	require.NoError(t, err)
+	var resource model.SyncResourceMetadata
+	require.NoError(t, db.Where("resource_id = ?", created.ResourceID).Take(&resource).Error)
+	content, err := os.ReadFile(coordinator.notePath(1, resource.LegacyID))
+	require.NoError(t, err)
+	require.Equal(t, []byte(request.Content), content)
 }
 
 func TestSafeMutationCoordinator_EnforcesDeviceRoles(t *testing.T) {
@@ -158,6 +183,7 @@ func TestSafeMutationCoordinator_EnforcesDeviceRoles(t *testing.T) {
 		{VaultID: 48, DeviceID: "mirror-a", Role: string(domain.DeviceSyncRoleRemoteMirror), LastSeenAt: now},
 	}).Error)
 	coordinator := NewSafeMutationCoordinator(service.uow)
+	configureSafeContentStorage(t, coordinator)
 	coordinator.now = func() time.Time { return now }
 
 	request := func(deviceID, operationID string) *dto.SafeMutationRequest {
@@ -182,6 +208,7 @@ func TestSafeMutationCoordinator_UsesRevisionInsteadOfClientClock(t *testing.T) 
 	require.NoError(t, db.AutoMigrate(&model.Note{}))
 	require.NoError(t, db.Create(&model.VaultSyncState{VaultID: 47, State: "STRICT"}).Error)
 	coordinator := NewSafeMutationCoordinator(service.uow)
+	configureSafeContentStorage(t, coordinator)
 
 	create := &dto.SafeMutationRequest{
 		DeviceID: "device-a", OperationID: "op-clock-create", ExpectedPathState: "ABSENT", Action: "CREATE",
@@ -226,7 +253,10 @@ func TestSafeMutationCoordinator_UsesRevisionInsteadOfClientClock(t *testing.T) 
 
 	var note model.Note
 	require.NoError(t, db.Where("vault_id = ? AND path = ?", 47, create.Path).Take(&note).Error)
-	require.Equal(t, currentOldClock.Content, note.Content)
+	require.Empty(t, note.Content)
+	content, err := os.ReadFile(coordinator.notePath(1, note.ID))
+	require.NoError(t, err)
+	require.Equal(t, []byte(currentOldClock.Content), content)
 }
 
 func TestSafeMutationCoordinator_RecursiveFolderRenameIsAtomic(t *testing.T) {
@@ -325,6 +355,9 @@ func TestSafeMutationCoordinator_FileCommitIsExplicitAndIdempotent(t *testing.T)
 	coordinator.filePath = func(_, fileID int64) string {
 		return filepath.Join(volumeRoot, "files", strconv.FormatInt(fileID, 10), "file.dat")
 	}
+	coordinator.notePath = func(_, noteID int64) string {
+		return filepath.Join(volumeRoot, "notes", strconv.FormatInt(noteID, 10), "content.txt")
+	}
 
 	firstContent := []byte{0, 1, 2, 3}
 	firstUpload := filepath.Join(t.TempDir(), "first.upload")
@@ -385,6 +418,9 @@ func TestSafeMutationCoordinator_RecoversAppliedPreparedFileExactlyOnce(t *testi
 	coordinator.stager = stager
 	coordinator.filePath = func(_, fileID int64) string {
 		return filepath.Join(volumeRoot, "files", strconv.FormatInt(fileID, 10), "file.dat")
+	}
+	coordinator.notePath = func(_, noteID int64) string {
+		return filepath.Join(volumeRoot, "notes", strconv.FormatInt(noteID, 10), "content.txt")
 	}
 
 	oldContent := []byte("old")
@@ -453,6 +489,83 @@ func TestSafeMutationCoordinator_RecoversAppliedPreparedFileExactlyOnce(t *testi
 	require.Equal(t, int64(1), replayed.VaultRevision)
 }
 
+func TestSafeMutationCoordinator_RecoversAppliedPreparedNoteExactlyOnce(t *testing.T) {
+	ctx := context.Background()
+	service, db := setupSafeSyncServiceTest(t, "postgres", true)
+	require.NoError(t, db.AutoMigrate(&model.Note{}))
+	require.NoError(t, db.Create(&model.VaultSyncState{VaultID: 50, State: "STRICT"}).Error)
+
+	coordinator := NewSafeMutationCoordinator(service.uow)
+	configureSafeContentStorage(t, coordinator)
+	stager, err := coordinator.contentStager()
+	require.NoError(t, err)
+	oldContent := []byte("old note")
+	newContent := []byte("new note 中文")
+	targetPath := coordinator.notePath(1, 1)
+	require.NoError(t, os.MkdirAll(filepath.Dir(targetPath), 0o755))
+	require.NoError(t, os.WriteFile(targetPath, oldContent, 0o600))
+	path := "notes/recover.md"
+	pathHash := util.EncodeHash32(path)
+	oldHash := util.EncodeHash32Bytes(oldContent)
+	newHash := util.EncodeHash32Bytes(newContent)
+	require.NoError(t, db.Create(&model.Note{
+		ID: 1, VaultID: 50, Action: "create", Path: path, PathHash: pathHash,
+		ContentHash: oldHash, Size: int64(len(oldContent)), Version: 1, UpdatedTimestamp: time.Now().UnixMilli(),
+	}).Error)
+	require.NoError(t, db.Create(&model.SyncResourceMetadata{
+		ResourceID: "note-recover-applied", VaultID: 50, ResourceType: "NOTE", LegacyID: 1,
+		ResourceRevision: 1, CurrentPath: path, CurrentPathHash: pathHash,
+		ContentHash: oldHash, State: "LIVE", Size: int64(len(oldContent)),
+	}).Error)
+
+	request := &dto.SafeMutationRequest{
+		DeviceID: "device-a", OperationID: "op-note-recover-applied", ResourceID: "note-recover-applied",
+		BaseRevision: 1, BaseHash: oldHash, ExpectedPathState: "PRESENT", Action: "MODIFY",
+		Path: path, PathHash: pathHash, Content: string(newContent), ContentHash: newHash,
+		Size: int64(len(newContent)), Ctime: 100, Mtime: 200,
+	}
+	fingerprint, err := safeMutationFingerprint(50, domain.SyncResourceTypeNote, request)
+	require.NoError(t, err)
+	staged, err := stager.Stage(ctx, request.OperationID, targetPath, newContent, newHash)
+	require.NoError(t, err)
+	payload, err := json.Marshal(request)
+	require.NoError(t, err)
+	operation := model.SyncOperation{
+		VaultID: 50, DeviceID: request.DeviceID, OperationID: request.OperationID,
+		Action: "NOTE:MODIFY", RequestFingerprint: fingerprint, State: "PREPARED",
+		ResourceID: request.ResourceID, LegacyID: 1, RequestPayload: string(payload),
+		StagedPath: staged.StagedPath, OldImagePath: staged.OldImagePath,
+		TargetPath: staged.TargetPath, ExpectedHash: staged.ExpectedHash, TargetExisted: true,
+	}
+	require.NoError(t, db.Create(&operation).Error)
+	require.NoError(t, stager.Apply(ctx, staged))
+
+	require.NoError(t, coordinator.RecoverPrepared(ctx, 1))
+	require.NoError(t, coordinator.RecoverPrepared(ctx, 1))
+
+	var recovered model.SyncOperation
+	require.NoError(t, db.Where("id = ?", operation.ID).Take(&recovered).Error)
+	require.Equal(t, "COMMITTED", recovered.State)
+	require.Empty(t, recovered.RequestPayload)
+	require.Equal(t, int64(2), recovered.ResourceRevision)
+	require.Equal(t, int64(1), recovered.VaultRevision)
+	var note model.Note
+	require.NoError(t, db.Where("id = ?", 1).Take(&note).Error)
+	require.Empty(t, note.Content)
+	require.Equal(t, newHash, note.ContentHash)
+	content, err := os.ReadFile(targetPath)
+	require.NoError(t, err)
+	require.Equal(t, newContent, content)
+	var eventCount int64
+	require.NoError(t, db.Model(&model.SyncEvent{}).Where("vault_id = ?", 50).Count(&eventCount).Error)
+	require.Equal(t, int64(1), eventCount)
+	require.NoDirExists(t, filepath.Dir(staged.StagedPath))
+	replayed, err := coordinator.Mutate(ctx, 1, 50, domain.SyncResourceTypeNote, request)
+	require.NoError(t, err)
+	require.True(t, replayed.Replayed)
+	require.Equal(t, int64(1), replayed.VaultRevision)
+}
+
 func TestSafeMutationCoordinator_RestoresIncompletePreparedBeforeNextMutationAndAllowsRetry(t *testing.T) {
 	ctx := context.Background()
 	service, db := setupSafeSyncServiceTest(t, "postgres", true)
@@ -466,6 +579,9 @@ func TestSafeMutationCoordinator_RestoresIncompletePreparedBeforeNextMutationAnd
 	coordinator.stager = stager
 	coordinator.filePath = func(_, fileID int64) string {
 		return filepath.Join(volumeRoot, "files", strconv.FormatInt(fileID, 10), "file.dat")
+	}
+	coordinator.notePath = func(_, noteID int64) string {
+		return filepath.Join(volumeRoot, "notes", strconv.FormatInt(noteID, 10), "content.txt")
 	}
 
 	oldContent := []byte("old")

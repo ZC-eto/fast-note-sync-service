@@ -26,9 +26,10 @@ func setupSafeSyncUnitOfWorkTest(t *testing.T) (*SafeSyncUnitOfWork, *gorm.DB) {
 	require.NoError(t, err)
 
 	dbCfg := &config.DatabaseConfig{
-		Type:             "sqlite",
-		Path:             dbPath,
-		EnableWriteQueue: util.Ptr(false),
+		Type:                "sqlite",
+		Path:                dbPath,
+		EnableWriteQueue:    util.Ptr(false),
+		MaxWriteConcurrency: 1,
 	}
 	daoInst := New(db, context.Background(),
 		WithConfig(dbCfg),
