@@ -6,6 +6,17 @@ The project adheres to [Keep a Changelog](https://keepachangelog.com/en/0.3.0/) 
 
 ---
 
+## v3.6.13
+> *2026/08/12*
+
+### Fixed
+
+- **Safe Sync**: Fixed historical duplicate or orphaned legacy Note/File/Folder rows causing a `STRICT` Vault manifest, legacy download API, and WebGUI to resolve different records.
+- **Data Repair**: PostgreSQL startup now rebuilds a unique legacy projection from each safe resource's `LegacyID`, current path, content hash, and size. Historical rows not referenced by a live safe resource are only soft-deleted in the legacy tables; their database rows and persisted content remain intact, and safe resources, events, and revisions are unchanged.
+- **Data Protection**: Repair aborts and rolls back instead of guessing or deleting data when a strict Vault has active legacy rows but no safe resources, or when a live safe resource references a missing legacy row.
+
+---
+
 ## v3.6.12
 > *2026/08/12*
 

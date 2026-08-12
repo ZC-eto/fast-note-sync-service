@@ -2,10 +2,10 @@
 
 ## 文档状态
 
-- 状态：服务端 `3.6.12` 的目录父子关系修复已通过本地完整测试，待发布部署；线上仍为 `3.6.11`，Windows 已加载插件 `2.5.11`，Android 暂不更新
+- 状态：服务端 `3.6.13` 的严格 Vault 一一投影修复已通过本地测试，待发布部署；线上为 `3.6.12`，Windows 已加载插件 `2.5.12`，Android 暂不更新
 - 日期：2026-08-12
-- 服务端交付版本：Fast Note Sync Service `3.6.12`
-- Windows 当前版本：Obsidian Fast Note Sync `2.5.11`
+- 服务端交付版本：Fast Note Sync Service `3.6.13`
+- Windows 当前版本：Obsidian Fast Note Sync `2.5.12`
 - 工作分支：两个 fork 均为 `feat/safe-multi-device-sync`
 - 涉及仓库：`fast-note-sync-service`、`obsidian-fast-note-sync`
 - 实施原则：插件端与服务端必须协同修改，不允许只在一端模拟新语义
@@ -21,6 +21,7 @@
 - 文件内容先写持久卷 staging，再记录 `PREPARED` 并执行原子替换。服务启动会枚举用户恢复所有 `PREPARED`；下一次安全资源访问也会先恢复当前 Vault。
 - 服务端 `3.6.11` 将 NOTE CREATE / MODIFY 纳入与附件相同的持久卷两阶段提交。此前安全接口只更新 PostgreSQL 中的笔记元数据，而普通下载接口优先读取 `storage/vault/u_<uid>/note/n_<id>/content.txt`，会出现 baseline/hash/size 已更新但下载正文仍旧的分裂状态；现在正文文件原子替换成功后才提交资源修订、Vault Revision、事件和幂等结果，数据库 `note.content` 继续保持为空。
 - 服务端 `3.6.12` 修复安全写入的层级元数据：Note/File/Folder 创建、修改或重命名会按完整路径同步写入旧表父目录 `FID`，目录同时维护正确 `level`；目录树移动会在同一事务中修复全部后代。PostgreSQL 启动时还会自动修复现有 `STRICT` Vault 的错误 `FID/level`，不改正文、附件、安全资源、事件或 Revision。
+- 服务端 `3.6.13` 修复历史重复或孤儿旧行导致的分裂读取：`STRICT` Vault 启动时以 `SyncResourceMetadata.LegacyID` 为唯一身份，把安全资源当前路径、哈希、大小和父目录投影回旧 Note/File/Folder 表；未被活动安全资源引用的旧行仅标记为旧表删除状态，数据库行和持久卷正文仍保留。修复事务不修改安全资源、事件或 Revision，遇到安全资源缺失或身份断裂会整体回滚并拒绝猜测。
 - 恢复时若目标 hash 已匹配，则只提交一次资源状态、事件、Vault Revision 和 `COMMITTED` 结果；若替换未完成，则恢复 old-image、移除未完成记录并允许同一 operationId 重新提交。未 `COMMITTED` 的操作不会 ACK 或广播。
 - 客户端 baseline/pending 按 `serverFingerprint + uid + vaultId` 双写持久化；远端事件按 Vault Revision 串行应用，分页中断后从持久化 Revision 重新拉取。
 - 插件 `2.5.9` 修复严格模式重连时仍由旧附件清单触发 `FileUploadChunkBinary` 的问题：启动时先拉取远端修订并按 baseline 安全提交可确认的本地离线变化，再让旧清单通道只承担内容下发；旧 Note/File 上传指令在安全模式下不进入队列。同步期间到达的新 `SafeSyncEvent` 会合并并在当前轮次结束后重拉，不再静默丢失。`Safe*` ACK 使用独立请求 context，不再被旧批量同步 `activeSyncContext` 丢弃。

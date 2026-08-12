@@ -366,8 +366,9 @@ func (c *SafeMutationCoordinator) RecoverPrepared(ctx context.Context, uid int64
 	return nil
 }
 
-// RepairLegacyHierarchy restores the legacy FID relationships consumed by the
-// WebGUI without changing safe-sync resources, revisions, or content.
+// RepairLegacyHierarchy restores the one-to-one legacy projection consumed by
+// the WebGUI and legacy read APIs without changing safe-sync resources,
+// revisions, or content files.
 func (c *SafeMutationCoordinator) RepairLegacyHierarchy(ctx context.Context, uid int64) error {
 	var vaultIDs []int64
 	if err := c.uow.Transaction(ctx, uid, func(tx *gorm.DB) error {
@@ -1084,22 +1085,62 @@ func safeLegacyFolderLevel(path string) int64 {
 }
 
 func repairSafeLegacyHierarchy(tx *gorm.DB, vaultID int64) error {
-	if !tx.Migrator().HasTable(&model.Folder{}) {
+	if !tx.Migrator().HasTable(&model.SyncResourceMetadata{}) ||
+		!tx.Migrator().HasTable(&model.Folder{}) ||
+		!tx.Migrator().HasTable(&model.Note{}) ||
+		!tx.Migrator().HasTable(&model.File{}) {
 		return nil
 	}
-	var folders []model.Folder
-	if err := tx.Where("vault_id = ?", vaultID).Order("path, id").Find(&folders).Error; err != nil {
+
+	var resources []model.SyncResourceMetadata
+	if err := tx.Where("vault_id = ?", vaultID).Order("resource_type, legacy_id").Find(&resources).Error; err != nil {
 		return err
 	}
-	canonicalFolderID := make(map[string]int64)
-	for _, folder := range folders {
-		if folder.Action == "delete" {
-			continue
+	if len(resources) == 0 {
+		var activeCount int64
+		for _, target := range []any{&model.Folder{}, &model.Note{}, &model.File{}} {
+			var count int64
+			if err := tx.Model(target).Where("vault_id = ? AND action <> ?", vaultID, "delete").Count(&count).Error; err != nil {
+				return err
+			}
+			activeCount += count
 		}
-		if _, exists := canonicalFolderID[folder.Path]; !exists {
-			canonicalFolderID[folder.Path] = folder.ID
+		if activeCount > 0 {
+			return fmt.Errorf("strict vault %d has %d active legacy rows but no safe resources", vaultID, activeCount)
+		}
+		return nil
+	}
+
+	liveByType := map[string]map[int64]model.SyncResourceMetadata{
+		string(domain.SyncResourceTypeFolder): {},
+		string(domain.SyncResourceTypeNote):   {},
+		string(domain.SyncResourceTypeFile):   {},
+	}
+	canonicalFolderID := make(map[string]int64)
+	for _, resource := range resources {
+		byID, supported := liveByType[resource.ResourceType]
+		if !supported {
+			return fmt.Errorf("unsupported safe resource type %q", resource.ResourceType)
+		}
+		switch resource.State {
+		case string(domain.SyncResourceStateDeleted):
+			continue
+		case string(domain.SyncResourceStateLive):
+		default:
+			return fmt.Errorf("unsupported safe resource state %q for %s %d", resource.State, resource.ResourceType, resource.LegacyID)
+		}
+		if resource.LegacyID <= 0 || resource.CurrentPath == "" {
+			return fmt.Errorf("live safe %s resource has invalid legacy identity", resource.ResourceType)
+		}
+		byID[resource.LegacyID] = resource
+		if resource.ResourceType == string(domain.SyncResourceTypeFolder) {
+			if _, exists := canonicalFolderID[resource.CurrentPath]; exists {
+				return fmt.Errorf("duplicate live safe folder path %q", resource.CurrentPath)
+			}
+			canonicalFolderID[resource.CurrentPath] = resource.LegacyID
 		}
 	}
+
 	resolveParent := func(path string) (int64, error) {
 		parent := parentPath(strings.Trim(path, "/"))
 		if parent == "" {
@@ -1107,58 +1148,109 @@ func repairSafeLegacyHierarchy(tx *gorm.DB, vaultID int64) error {
 		}
 		fid, exists := canonicalFolderID[parent]
 		if !exists {
-			return 0, fmt.Errorf("live parent folder %q is missing", parent)
+			return 0, fmt.Errorf("live safe parent folder %q is missing", parent)
 		}
 		return fid, nil
 	}
+	seenLive := map[string]map[int64]bool{
+		string(domain.SyncResourceTypeFolder): {},
+		string(domain.SyncResourceTypeNote):   {},
+		string(domain.SyncResourceTypeFile):   {},
+	}
+
+	var folders []model.Folder
+	if err := tx.Where("vault_id = ?", vaultID).Order("id").Find(&folders).Error; err != nil {
+		return err
+	}
 	for _, folder := range folders {
-		if folder.Action == "delete" {
+		resource, live := liveByType[string(domain.SyncResourceTypeFolder)][folder.ID]
+		if !live {
+			if folder.Action != "delete" {
+				if err := tx.Model(&model.Folder{}).Where("id = ? AND vault_id = ?", folder.ID, vaultID).
+					UpdateColumn("action", "delete").Error; err != nil {
+					return err
+				}
+			}
 			continue
 		}
-		fid, err := resolveParent(folder.Path)
+		seenLive[string(domain.SyncResourceTypeFolder)][folder.ID] = true
+		fid, err := resolveParent(resource.CurrentPath)
 		if err != nil {
 			return err
 		}
-		level := safeLegacyFolderLevel(folder.Path)
-		if folder.FID == fid && folder.Level == level {
+		if err := tx.Model(&model.Folder{}).Where("id = ? AND vault_id = ?", folder.ID, vaultID).
+			Updates(map[string]any{
+				"action": "create", "path": resource.CurrentPath, "path_hash": resource.CurrentPathHash,
+				"fid": fid, "level": safeLegacyFolderLevel(resource.CurrentPath),
+			}).Error; err != nil {
+			return err
+		}
+	}
+
+	var notes []model.Note
+	if err := tx.Where("vault_id = ?", vaultID).Order("id").Find(&notes).Error; err != nil {
+		return err
+	}
+	for _, note := range notes {
+		resource, live := liveByType[string(domain.SyncResourceTypeNote)][note.ID]
+		if !live {
+			if note.Action != "delete" || note.Rename != 0 {
+				if err := tx.Model(&model.Note{}).Where("id = ? AND vault_id = ?", note.ID, vaultID).
+					Updates(map[string]any{"action": "delete", "rename": 0}).Error; err != nil {
+					return err
+				}
+			}
 			continue
 		}
-		if err := tx.Model(&model.Folder{}).Where("id = ? AND vault_id = ?", folder.ID, vaultID).
-			Updates(map[string]any{"fid": fid, "level": level}).Error; err != nil {
+		seenLive[string(domain.SyncResourceTypeNote)][note.ID] = true
+		fid, err := resolveParent(resource.CurrentPath)
+		if err != nil {
+			return err
+		}
+		if err := tx.Model(&model.Note{}).Where("id = ? AND vault_id = ?", note.ID, vaultID).
+			Updates(map[string]any{
+				"action": "modify", "rename": 0, "path": resource.CurrentPath,
+				"path_hash": resource.CurrentPathHash, "content_hash": resource.ContentHash,
+				"size": resource.Size, "fid": fid,
+			}).Error; err != nil {
 			return err
 		}
 	}
-	if tx.Migrator().HasTable(&model.Note{}) {
-		var notes []model.Note
-		if err := tx.Where("vault_id = ? AND action <> ?", vaultID, "delete").Find(&notes).Error; err != nil {
-			return err
-		}
-		for _, note := range notes {
-			fid, err := resolveParent(note.Path)
-			if err != nil {
-				return err
-			}
-			if note.FID != fid {
-				if err := tx.Model(&model.Note{}).Where("id = ? AND vault_id = ?", note.ID, vaultID).UpdateColumn("fid", fid).Error; err != nil {
+
+	var files []model.File
+	if err := tx.Where("vault_id = ?", vaultID).Order("id").Find(&files).Error; err != nil {
+		return err
+	}
+	for _, file := range files {
+		resource, live := liveByType[string(domain.SyncResourceTypeFile)][file.ID]
+		if !live {
+			if file.Action != "delete" || file.Rename != 0 {
+				if err := tx.Model(&model.File{}).Where("id = ? AND vault_id = ?", file.ID, vaultID).
+					Updates(map[string]any{"action": "delete", "rename": 0}).Error; err != nil {
 					return err
 				}
 			}
+			continue
+		}
+		seenLive[string(domain.SyncResourceTypeFile)][file.ID] = true
+		fid, err := resolveParent(resource.CurrentPath)
+		if err != nil {
+			return err
+		}
+		if err := tx.Model(&model.File{}).Where("id = ? AND vault_id = ?", file.ID, vaultID).
+			Updates(map[string]any{
+				"action": "modify", "rename": 0, "path": resource.CurrentPath,
+				"path_hash": resource.CurrentPathHash, "content_hash": resource.ContentHash,
+				"size": resource.Size, "fid": fid,
+			}).Error; err != nil {
+			return err
 		}
 	}
-	if tx.Migrator().HasTable(&model.File{}) {
-		var files []model.File
-		if err := tx.Where("vault_id = ? AND action <> ?", vaultID, "delete").Find(&files).Error; err != nil {
-			return err
-		}
-		for _, file := range files {
-			fid, err := resolveParent(file.Path)
-			if err != nil {
-				return err
-			}
-			if file.FID != fid {
-				if err := tx.Model(&model.File{}).Where("id = ? AND vault_id = ?", file.ID, vaultID).UpdateColumn("fid", fid).Error; err != nil {
-					return err
-				}
+
+	for resourceType, byID := range liveByType {
+		for legacyID := range byID {
+			if !seenLive[resourceType][legacyID] {
+				return fmt.Errorf("live safe %s resource references missing legacy row %d", resourceType, legacyID)
 			}
 		}
 	}

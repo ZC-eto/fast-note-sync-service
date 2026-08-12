@@ -218,16 +218,31 @@ func TestSafeMutationCoordinator_RepairsExistingLegacyHierarchy(t *testing.T) {
 	require.NoError(t, db.Create(&model.VaultSyncState{VaultID: 53, State: "STRICT"}).Error)
 	require.NoError(t, db.Create(&model.VaultSyncState{VaultID: 54, State: "OFF"}).Error)
 
-	root := model.Folder{ID: 10, VaultID: 53, Action: "create", Path: "英语", PathHash: util.EncodeHash32("英语"), FID: 99}
-	child := model.Folder{ID: 11, VaultID: 53, Action: "create", Path: "英语/练习", PathHash: util.EncodeHash32("英语/练习"), FID: 0}
-	note := model.Note{ID: 12, VaultID: 53, Action: "create", Path: "英语/练习/a.md", PathHash: util.EncodeHash32("英语/练习/a.md"), FID: 0}
-	file := model.File{ID: 13, VaultID: 53, Action: "create", Path: "英语/练习/a.bin", PathHash: util.EncodeHash32("英语/练习/a.bin"), FID: 0}
+	root := model.Folder{ID: 10, VaultID: 53, Action: "create", Path: "旧英语", PathHash: util.EncodeHash32("旧英语"), FID: 99}
+	child := model.Folder{ID: 11, VaultID: 53, Action: "create", Path: "练习", PathHash: util.EncodeHash32("练习"), FID: 0}
+	note := model.Note{ID: 12, VaultID: 53, Action: "create", Path: "a.md", PathHash: util.EncodeHash32("a.md"), ContentHash: "old-note", Size: 8, FID: 0}
+	file := model.File{ID: 13, VaultID: 53, Action: "create", Path: "a.bin", PathHash: util.EncodeHash32("a.bin"), ContentHash: "old-file", Size: 9, FID: 0}
+	orphanFolder := model.Folder{ID: 9, VaultID: 53, Action: "create", Path: "练习", PathHash: util.EncodeHash32("练习")}
+	orphanNote := model.Note{ID: 9, VaultID: 53, Action: "modify", Rename: 1, Path: "英语/练习/a.md", PathHash: util.EncodeHash32("英语/练习/a.md"), ContentHash: "stale-note"}
+	orphanFile := model.File{ID: 9, VaultID: 53, Action: "modify", Rename: 1, Path: "英语/练习/a.bin", PathHash: util.EncodeHash32("英语/练习/a.bin"), ContentHash: "stale-file"}
 	offFolder := model.Folder{ID: 20, VaultID: 54, Action: "create", Path: "off", PathHash: util.EncodeHash32("off"), FID: 99}
 	require.NoError(t, db.Create(&root).Error)
 	require.NoError(t, db.Create(&child).Error)
 	require.NoError(t, db.Create(&note).Error)
 	require.NoError(t, db.Create(&file).Error)
+	require.NoError(t, db.Create(&orphanFolder).Error)
+	require.NoError(t, db.Create(&orphanNote).Error)
+	require.NoError(t, db.Create(&orphanFile).Error)
 	require.NoError(t, db.Create(&offFolder).Error)
+	require.NoError(t, db.Create(&[]model.SyncResourceMetadata{
+		{ResourceID: "folder-root", VaultID: 53, ResourceType: "FOLDER", LegacyID: root.ID, ResourceRevision: 4, CurrentPath: "英语", CurrentPathHash: util.EncodeHash32("英语"), State: "LIVE"},
+		{ResourceID: "folder-child", VaultID: 53, ResourceType: "FOLDER", LegacyID: child.ID, ResourceRevision: 5, CurrentPath: "英语/练习", CurrentPathHash: util.EncodeHash32("英语/练习"), State: "LIVE"},
+		{ResourceID: "note", VaultID: 53, ResourceType: "NOTE", LegacyID: note.ID, ResourceRevision: 6, CurrentPath: "英语/练习/a.md", CurrentPathHash: util.EncodeHash32("英语/练习/a.md"), ContentHash: "safe-note", State: "LIVE", Size: 10},
+		{ResourceID: "file", VaultID: 53, ResourceType: "FILE", LegacyID: file.ID, ResourceRevision: 7, CurrentPath: "英语/练习/a.bin", CurrentPathHash: util.EncodeHash32("英语/练习/a.bin"), ContentHash: "safe-file", State: "LIVE", Size: 11},
+	}).Error)
+	var staleSelection model.Note
+	require.NoError(t, db.Where("vault_id = ? AND path_hash = ? AND action <> ?", 53, util.EncodeHash32("英语/练习/a.md"), "delete").Order("id").Take(&staleSelection).Error)
+	require.Equal(t, orphanNote.ID, staleSelection.ID)
 
 	coordinator := NewSafeMutationCoordinator(service.uow)
 	require.NoError(t, coordinator.RepairLegacyHierarchy(ctx, 1))
@@ -235,14 +250,64 @@ func TestSafeMutationCoordinator_RepairsExistingLegacyHierarchy(t *testing.T) {
 	require.NoError(t, db.Where("id = ?", child.ID).Take(&child).Error)
 	require.NoError(t, db.Where("id = ?", note.ID).Take(&note).Error)
 	require.NoError(t, db.Where("id = ?", file.ID).Take(&file).Error)
+	require.NoError(t, db.Where("id = ?", orphanFolder.ID).Take(&orphanFolder).Error)
+	require.NoError(t, db.Where("id = ?", orphanNote.ID).Take(&orphanNote).Error)
+	require.NoError(t, db.Where("id = ?", orphanFile.ID).Take(&orphanFile).Error)
 	require.NoError(t, db.Where("id = ?", offFolder.ID).Take(&offFolder).Error)
+	require.Equal(t, "英语", root.Path)
 	require.Zero(t, root.FID)
 	require.Equal(t, int64(1), root.Level)
+	require.Equal(t, "英语/练习", child.Path)
 	require.Equal(t, root.ID, child.FID)
 	require.Equal(t, int64(2), child.Level)
+	require.Equal(t, "英语/练习/a.md", note.Path)
+	require.Equal(t, util.EncodeHash32(note.Path), note.PathHash)
+	require.Equal(t, "safe-note", note.ContentHash)
+	require.Equal(t, int64(10), note.Size)
 	require.Equal(t, child.ID, note.FID)
+	require.Equal(t, "英语/练习/a.bin", file.Path)
+	require.Equal(t, util.EncodeHash32(file.Path), file.PathHash)
+	require.Equal(t, "safe-file", file.ContentHash)
+	require.Equal(t, int64(11), file.Size)
 	require.Equal(t, child.ID, file.FID)
+	require.Equal(t, "delete", orphanFolder.Action)
+	require.Equal(t, "delete", orphanNote.Action)
+	require.Zero(t, orphanNote.Rename)
+	require.Equal(t, "delete", orphanFile.Action)
+	require.Zero(t, orphanFile.Rename)
 	require.Equal(t, int64(99), offFolder.FID)
+
+	var activeNotes, activeFolders int64
+	require.NoError(t, db.Model(&model.Note{}).Where("vault_id = ? AND path = ? AND action <> ?", 53, note.Path, "delete").Count(&activeNotes).Error)
+	require.Equal(t, int64(1), activeNotes)
+	require.NoError(t, db.Model(&model.Folder{}).Where("vault_id = ? AND path = ? AND action <> ?", 53, child.Path, "delete").Count(&activeFolders).Error)
+	require.Equal(t, int64(1), activeFolders)
+	var canonicalSelection model.Note
+	require.NoError(t, db.Where("vault_id = ? AND path_hash = ? AND action <> ?", 53, note.PathHash, "delete").Order("id").Take(&canonicalSelection).Error)
+	require.Equal(t, note.ID, canonicalSelection.ID)
+	require.NoError(t, coordinator.RepairLegacyHierarchy(ctx, 1))
+
+	var resources []model.SyncResourceMetadata
+	require.NoError(t, db.Where("vault_id = ?", 53).Order("resource_id").Find(&resources).Error)
+	require.Equal(t, []int64{7, 5, 4, 6}, []int64{
+		resources[0].ResourceRevision, resources[1].ResourceRevision,
+		resources[2].ResourceRevision, resources[3].ResourceRevision,
+	})
+}
+
+func TestSafeMutationCoordinator_RejectsLegacyProjectionWithoutSafeResources(t *testing.T) {
+	ctx := context.Background()
+	service, db := setupSafeSyncServiceTest(t, "postgres", true)
+	require.NoError(t, db.AutoMigrate(&model.Note{}, &model.File{}, &model.Folder{}))
+	require.NoError(t, db.Create(&model.VaultSyncState{VaultID: 55, State: "STRICT"}).Error)
+	legacy := model.Note{ID: 30, VaultID: 55, Action: "create", Path: "preserve.md", PathHash: util.EncodeHash32("preserve.md")}
+	require.NoError(t, db.Create(&legacy).Error)
+
+	coordinator := NewSafeMutationCoordinator(service.uow)
+	err := coordinator.RepairLegacyHierarchy(ctx, 1)
+	require.ErrorContains(t, err, "active legacy rows but no safe resources")
+	require.NoError(t, db.Where("id = ?", legacy.ID).Take(&legacy).Error)
+	require.Equal(t, "create", legacy.Action)
 }
 
 func legacyIDForResource(t *testing.T, db *gorm.DB, resourceID string) int64 {
