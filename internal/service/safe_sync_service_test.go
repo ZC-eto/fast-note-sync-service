@@ -138,6 +138,8 @@ func TestSafeSyncService_ReleasesOwnPublisherLeaseWhenRoleChanges(t *testing.T) 
 func TestSafeSyncService_BootstrapPagesAndCommitsStrictWithoutDowngrade(t *testing.T) {
 	ctx := context.Background()
 	service, db := setupSafeSyncServiceTest(t, "postgres", true)
+	testNow := time.Date(2026, 8, 12, 9, 0, 0, 0, time.UTC)
+	service.now = func() time.Time { return testNow }
 	resources := []model.SyncResourceMetadata{
 		{ResourceID: "resource-c", VaultID: 9, ResourceType: "FOLDER", LegacyID: 3, ResourceRevision: 1, CurrentPath: "docs", CurrentPathHash: "path-c", State: "LIVE"},
 		{ResourceID: "resource-a", VaultID: 9, ResourceType: "NOTE", LegacyID: 1, ResourceRevision: 1, CurrentPath: "a.md", CurrentPathHash: "path-a", ContentHash: "hash-a", State: "LIVE", Size: 10},
@@ -148,6 +150,7 @@ func TestSafeSyncService_BootstrapPagesAndCommitsStrictWithoutDowngrade(t *testi
 	started, err := service.BootstrapStart(ctx, 1, 9, "device-a")
 	require.NoError(t, err)
 	require.Equal(t, string(domain.VaultSyncStateBootstrapping), started.State)
+	require.Equal(t, testNow.Add(30*time.Minute).UnixMilli(), started.ExpiresAt)
 	require.NotEmpty(t, started.SessionID)
 	require.NotEmpty(t, started.ManifestHash)
 	require.NotEmpty(t, started.Cursor)

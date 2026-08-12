@@ -6,6 +6,15 @@ The project adheres to [Keep a Changelog](https://keepachangelog.com/en/0.3.0/) 
 
 ---
 
+## v3.6.15
+> *2026/08/12*
+
+### Fixed
+
+- **Authoritative Overwrite**: Increased the safe bootstrap and preview lifetime from 10 to 30 minutes so Vaults with many attachments can finish physical-content hashing and commit. The pre-commit content-drift check and transactional rollback protection remain unchanged.
+
+---
+
 ## v3.6.14
 > *2026/08/12*
 

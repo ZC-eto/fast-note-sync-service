@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	safeSyncBootstrapTTL    = 10 * time.Minute
+	safeSyncBootstrapTTL    = 30 * time.Minute
 	safeSyncDefaultPageSize = 200
 	safeSyncMaximumPageSize = 500
 )
