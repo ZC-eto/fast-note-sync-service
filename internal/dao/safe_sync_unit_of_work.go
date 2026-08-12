@@ -143,6 +143,86 @@ func (u *SafeSyncUnitOfWork) ReconcileLegacyResourceMetadata(tx *gorm.DB, uid, v
 	return reconcileLegacyFolders(tx, vaultID)
 }
 
+// ReconcileStrictLiveContentMetadata reads the persisted content for every live
+// note and attachment in a strict Vault. It updates legacy read metadata and
+// returns safe resources whose content metadata needs a new revision.
+func (u *SafeSyncUnitOfWork) ReconcileStrictLiveContentMetadata(tx *gorm.DB, uid, vaultID int64) ([]model.SyncResourceMetadata, error) {
+	if tx == nil {
+		return nil, errors.New("safe sync transaction is nil")
+	}
+	var resources []model.SyncResourceMetadata
+	if err := tx.Where("vault_id = ? AND state = ? AND resource_type IN ?", vaultID, "LIVE", []string{"NOTE", "FILE"}).
+		Order("resource_id").Find(&resources).Error; err != nil {
+		return nil, err
+	}
+	changed := make([]model.SyncResourceMetadata, 0)
+	for index := range resources {
+		resource := &resources[index]
+		var contentHash string
+		var size int64
+		switch resource.ResourceType {
+		case "NOTE":
+			var note model.Note
+			if err := tx.Select("id", "vault_id", "action", "path", "path_hash", "content", "content_hash", "size").
+				Where("id = ? AND vault_id = ? AND action <> ?", resource.LegacyID, vaultID, "delete").Take(&note).Error; err != nil {
+				return nil, fmt.Errorf("load live legacy note %d: %w", resource.LegacyID, err)
+			}
+			if note.Path != resource.CurrentPath || note.PathHash != resource.CurrentPathHash {
+				return nil, fmt.Errorf("live note %d path does not match safe resource", note.ID)
+			}
+			content, exists, err := u.dao.LoadContentFromFile(u.dao.GetNoteFolderPath(uid, note.ID), "content.txt")
+			if err != nil {
+				return nil, fmt.Errorf("read live note content for note %d: %w", note.ID, err)
+			}
+			if !exists {
+				if note.Content == "" {
+					return nil, fmt.Errorf("live note content is unavailable for note %d", note.ID)
+				}
+				content = note.Content
+			}
+			contentHash = util.EncodeHash32(content)
+			size = int64(len([]byte(content)))
+			if note.ContentHash != contentHash || note.Size != size {
+				if err := tx.Model(&model.Note{}).Where("id = ? AND vault_id = ?", note.ID, vaultID).
+					Updates(map[string]any{"content_hash": contentHash, "size": size}).Error; err != nil {
+					return nil, err
+				}
+			}
+		case "FILE":
+			var file model.File
+			if err := tx.Select("id", "vault_id", "action", "path", "path_hash", "content_hash", "size", "save_path").
+				Where("id = ? AND vault_id = ? AND action <> ?", resource.LegacyID, vaultID, "delete").Take(&file).Error; err != nil {
+				return nil, fmt.Errorf("load live legacy attachment %d: %w", resource.LegacyID, err)
+			}
+			if file.Path != resource.CurrentPath || file.PathHash != resource.CurrentPathHash {
+				return nil, fmt.Errorf("live attachment %d path does not match safe resource", file.ID)
+			}
+			contentPath, err := u.resolveLiveFileContentPath(uid, &file)
+			if err != nil {
+				return nil, err
+			}
+			contentHash, size, err = hashLiveFileContent(contentPath)
+			if err != nil {
+				return nil, fmt.Errorf("read live attachment content for file %d: %w", file.ID, err)
+			}
+			if file.ContentHash != contentHash || file.Size != size {
+				if err := tx.Model(&model.File{}).Where("id = ? AND vault_id = ?", file.ID, vaultID).
+					Updates(map[string]any{"content_hash": contentHash, "size": size}).Error; err != nil {
+					return nil, err
+				}
+			}
+		default:
+			return nil, fmt.Errorf("unsupported strict content resource type %q", resource.ResourceType)
+		}
+		if resource.ContentHash != contentHash || resource.Size != size {
+			resource.ContentHash = contentHash
+			resource.Size = size
+			changed = append(changed, *resource)
+		}
+	}
+	return changed, nil
+}
+
 func (u *SafeSyncUnitOfWork) reconcileLegacyNotes(tx *gorm.DB, uid, vaultID int64) error {
 	if !tx.Migrator().HasTable(&model.Note{}) {
 		return nil
@@ -167,6 +247,12 @@ func (u *SafeSyncUnitOfWork) reconcileLegacyNotes(tx *gorm.DB, uid, vaultID int6
 			}
 			contentHash = util.EncodeHash32(content)
 			size = int64(len([]byte(content)))
+		}
+		if note.ContentHash != contentHash || note.Size != size {
+			if err := tx.Model(&model.Note{}).Where("id = ? AND vault_id = ?", note.ID, vaultID).
+				Updates(map[string]any{"content_hash": contentHash, "size": size}).Error; err != nil {
+				return err
+			}
 		}
 		if err := reconcileLegacyResource(tx, "NOTE", note.ID, note.VaultID, note.Action, note.Path, note.PathHash,
 			contentHash, size); err != nil {
@@ -195,6 +281,12 @@ func (u *SafeSyncUnitOfWork) reconcileLegacyFiles(tx *gorm.DB, uid, vaultID int6
 			contentHash, size, err = hashLiveFileContent(contentPath)
 			if err != nil {
 				return fmt.Errorf("read live attachment content for file %d: %w", file.ID, err)
+			}
+		}
+		if file.ContentHash != contentHash || file.Size != size {
+			if err := tx.Model(&model.File{}).Where("id = ? AND vault_id = ?", file.ID, vaultID).
+				Updates(map[string]any{"content_hash": contentHash, "size": size}).Error; err != nil {
+				return err
 			}
 		}
 		if err := reconcileLegacyResource(tx, "FILE", file.ID, file.VaultID, file.Action, file.Path, file.PathHash, contentHash, size); err != nil {

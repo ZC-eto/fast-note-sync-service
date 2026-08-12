@@ -289,6 +289,176 @@ func TestSafeSyncService_BootstrapFailsClosedWhenLiveContentIsMissing(t *testing
 	require.Zero(t, stateCount)
 }
 
+func TestSafeSyncService_StrictBootstrapReconcilesPhysicalContentOnce(t *testing.T) {
+	t.Chdir(t.TempDir())
+	ctx := context.Background()
+	service, db := setupSafeSyncServiceTest(t, "postgres", true)
+	require.NoError(t, db.AutoMigrate(&model.Note{}, &model.File{}, &model.Folder{}))
+	now := time.Now().UTC()
+	require.NoError(t, db.Create(&model.VaultSyncState{
+		VaultID: 23, State: string(domain.VaultSyncStateStrict), LatestVaultRevision: 40,
+		MigrationVerifiedAt: &now,
+	}).Error)
+
+	noteContent := "strict note content"
+	fileContent := []byte{0, 1, 2, 3, 254, 255}
+	require.NoError(t, db.Create(&model.Note{
+		ID: 31, VaultID: 23, Action: "modify", Path: "notes/current.md", PathHash: "note-path",
+		Content: "stale note content", ContentHash: "stale-note-hash", Size: 1,
+	}).Error)
+	require.NoError(t, db.Create(&model.File{
+		ID: 32, VaultID: 23, Action: "modify", Path: "assets/current.bin", PathHash: "file-path",
+		ContentHash: "stale-file-hash", Size: 2,
+	}).Error)
+	noteFolder := filepath.Join("storage", "vault", "u_1", "note", "n_31")
+	fileFolder := filepath.Join("storage", "vault", "u_1", "file", "f_32")
+	require.NoError(t, os.MkdirAll(noteFolder, 0o755))
+	require.NoError(t, os.MkdirAll(fileFolder, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(noteFolder, "content.txt"), []byte(noteContent), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(fileFolder, "file.dat"), fileContent, 0o644))
+	resources := []model.SyncResourceMetadata{
+		{
+			ResourceID: "strict-note", VaultID: 23, ResourceType: "NOTE", LegacyID: 31,
+			ResourceRevision: 3, CurrentPath: "notes/current.md", CurrentPathHash: "note-path",
+			ContentHash: "stale-note-hash", State: "LIVE", Size: 1,
+		},
+		{
+			ResourceID: "strict-file", VaultID: 23, ResourceType: "FILE", LegacyID: 32,
+			ResourceRevision: 7, CurrentPath: "assets/current.bin", CurrentPathHash: "file-path",
+			ContentHash: "stale-file-hash", State: "LIVE", Size: 2,
+		},
+	}
+	require.NoError(t, db.Create(&resources).Error)
+
+	started, err := service.BootstrapStart(ctx, 1, 23, "device-a")
+	require.NoError(t, err)
+	require.Equal(t, int64(42), started.SnapshotVaultRevision)
+	page, err := service.BootstrapPage(ctx, 1, 23, started.SessionID, started.Cursor, 20)
+	require.NoError(t, err)
+	require.Len(t, page.Items, 2)
+	items := make(map[string]dto.SafeSyncManifestItem, len(page.Items))
+	for _, item := range page.Items {
+		items[item.ResourceID] = item
+	}
+	require.Equal(t, util.EncodeHash32(noteContent), items["strict-note"].ContentHash)
+	require.Equal(t, int64(len([]byte(noteContent))), items["strict-note"].Size)
+	require.Equal(t, int64(4), items["strict-note"].ResourceRevision)
+	require.Equal(t, util.EncodeHash32Bytes(fileContent), items["strict-file"].ContentHash)
+	require.Equal(t, int64(len(fileContent)), items["strict-file"].Size)
+	require.Equal(t, int64(8), items["strict-file"].ResourceRevision)
+
+	var events []model.SyncEvent
+	require.NoError(t, db.Where("vault_id = ?", 23).Order("vault_revision").Find(&events).Error)
+	require.Len(t, events, 2)
+	require.Equal(t, []int64{41, 42}, []int64{events[0].VaultRevision, events[1].VaultRevision})
+	require.Equal(t, []string{"MODIFY", "MODIFY"}, []string{events[0].Action, events[1].Action})
+
+	_, err = service.BootstrapCancel(ctx, 1, 23, started.SessionID)
+	require.NoError(t, err)
+	second, err := service.BootstrapStart(ctx, 1, 23, "device-a")
+	require.NoError(t, err)
+	require.Equal(t, int64(42), second.SnapshotVaultRevision)
+	var eventCount int64
+	require.NoError(t, db.Model(&model.SyncEvent{}).Where("vault_id = ?", 23).Count(&eventCount).Error)
+	require.Equal(t, int64(2), eventCount)
+}
+
+func TestSafeSyncService_StrictBootstrapCommitRollsBackPhysicalContentChanges(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		resourceType string
+		writeChanged func(t *testing.T, contentPath string)
+	}{
+		{
+			name: "note", resourceType: "NOTE",
+			writeChanged: func(t *testing.T, contentPath string) {
+				t.Helper()
+				require.NoError(t, os.WriteFile(contentPath, []byte("note after preview"), 0o644))
+			},
+		},
+		{
+			name: "file", resourceType: "FILE",
+			writeChanged: func(t *testing.T, contentPath string) {
+				t.Helper()
+				require.NoError(t, os.WriteFile(contentPath, []byte("file after preview"), 0o644))
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Chdir(t.TempDir())
+			ctx := context.Background()
+			service, db := setupSafeSyncServiceTest(t, "postgres", true)
+			require.NoError(t, db.AutoMigrate(&model.Note{}, &model.File{}, &model.Folder{}))
+			now := time.Now().UTC()
+			vaultID := int64(30)
+			legacyID := int64(41)
+			path := "current.md"
+			pathHash := "current-path"
+			content := []byte("content at preview")
+			contentHash := util.EncodeHash32Bytes(content)
+			contentFolder := filepath.Join("storage", "vault", "u_1", "note", "n_41")
+			contentName := "content.txt"
+			if test.resourceType == "FILE" {
+				vaultID = 31
+				legacyID = 42
+				path = "current.bin"
+				contentFolder = filepath.Join("storage", "vault", "u_1", "file", "f_42")
+				contentName = "file.dat"
+			}
+			require.NoError(t, db.Create(&model.VaultSyncState{
+				VaultID: vaultID, State: string(domain.VaultSyncStateStrict), LatestVaultRevision: 5,
+				MigrationVerifiedAt: &now,
+			}).Error)
+			if test.resourceType == "NOTE" {
+				require.NoError(t, db.Create(&model.Note{
+					ID: legacyID, VaultID: vaultID, Action: "modify", Path: path, PathHash: pathHash,
+					Content: string(content), ContentHash: contentHash, Size: int64(len(content)),
+				}).Error)
+			} else {
+				require.NoError(t, db.Create(&model.File{
+					ID: legacyID, VaultID: vaultID, Action: "modify", Path: path, PathHash: pathHash,
+					ContentHash: contentHash, Size: int64(len(content)),
+				}).Error)
+			}
+			require.NoError(t, os.MkdirAll(contentFolder, 0o755))
+			contentPath := filepath.Join(contentFolder, contentName)
+			require.NoError(t, os.WriteFile(contentPath, content, 0o644))
+			require.NoError(t, db.Create(&model.SyncResourceMetadata{
+				ResourceID: "strict-" + test.name, VaultID: vaultID, ResourceType: test.resourceType, LegacyID: legacyID,
+				ResourceRevision: 2, CurrentPath: path, CurrentPathHash: pathHash,
+				ContentHash: contentHash, State: "LIVE", Size: int64(len(content)),
+			}).Error)
+
+			started, err := service.BootstrapStart(ctx, 1, vaultID, "device-a")
+			require.NoError(t, err)
+			test.writeChanged(t, contentPath)
+			_, err = service.BootstrapCommit(ctx, 1, vaultID, started.SessionID, started.ManifestHash, started.SnapshotVaultRevision)
+			require.Equal(t, domain.SafeSyncErrorBootstrapStateConflict, safeSyncErrorCode(err))
+
+			var state model.VaultSyncState
+			require.NoError(t, db.Where("vault_id = ?", vaultID).Take(&state).Error)
+			require.Equal(t, string(domain.VaultSyncStateBootstrapping), state.State)
+			require.Equal(t, int64(5), state.LatestVaultRevision)
+			var resource model.SyncResourceMetadata
+			require.NoError(t, db.Where("resource_id = ?", "strict-"+test.name).Take(&resource).Error)
+			require.Equal(t, contentHash, resource.ContentHash)
+			require.Equal(t, int64(2), resource.ResourceRevision)
+			var eventCount int64
+			require.NoError(t, db.Model(&model.SyncEvent{}).Where("vault_id = ?", vaultID).Count(&eventCount).Error)
+			require.Zero(t, eventCount)
+			if test.resourceType == "NOTE" {
+				var note model.Note
+				require.NoError(t, db.Where("id = ?", legacyID).Take(&note).Error)
+				require.Equal(t, contentHash, note.ContentHash)
+			} else {
+				var file model.File
+				require.NoError(t, db.Where("id = ?", legacyID).Take(&file).Error)
+				require.Equal(t, contentHash, file.ContentHash)
+			}
+		})
+	}
+}
+
 func TestSafeSyncService_EventsRequireAvailableCursor(t *testing.T) {
 	ctx := context.Background()
 	service, db := setupSafeSyncServiceTest(t, "postgres", true)

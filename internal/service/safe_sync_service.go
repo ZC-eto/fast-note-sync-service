@@ -122,6 +122,18 @@ func (s *safeSyncService) BootstrapStart(ctx context.Context, uid, vaultID int64
 			previousState = string(domain.VaultSyncStateOff)
 		}
 		expiresAt := now.Add(safeSyncBootstrapTTL)
+		snapshotRevision := current.LatestVaultRevision
+		if previousState == string(domain.VaultSyncStateOff) {
+			if err := s.uow.ReconcileLegacyResourceMetadata(tx, uid, vaultID); err != nil {
+				return err
+			}
+		} else {
+			var err error
+			snapshotRevision, err = s.reconcileStrictLiveContent(tx, uid, vaultID, current.LatestVaultRevision)
+			if err != nil {
+				return err
+			}
+		}
 		updates := map[string]any{
 			"state":                       string(domain.VaultSyncStateBootstrapping),
 			"bootstrap_session_id":        uuid.NewString(),
@@ -129,18 +141,13 @@ func (s *safeSyncService) BootstrapStart(ctx context.Context, uid, vaultID int64
 			"bootstrap_previous_state":    previousState,
 			"bootstrap_expires_at":        expiresAt,
 			"bootstrap_manifest_hash":     "",
-			"bootstrap_snapshot_revision": current.LatestVaultRevision,
+			"bootstrap_snapshot_revision": snapshotRevision,
 		}
 		if err := tx.Model(&model.VaultSyncState{}).Where("vault_id = ? AND state = ?", vaultID, current.State).Updates(updates).Error; err != nil {
 			return err
 		}
 		if err := tx.Where("vault_id = ?", vaultID).Take(current).Error; err != nil {
 			return err
-		}
-		if previousState == string(domain.VaultSyncStateOff) {
-			if err := s.uow.ReconcileLegacyResourceMetadata(tx, uid, vaultID); err != nil {
-				return err
-			}
 		}
 		createdSession = true
 		state = *current
@@ -275,13 +282,21 @@ func (s *safeSyncService) BootstrapCommit(ctx context.Context, uid, vaultID int6
 			if err := s.uow.ReconcileLegacyResourceMetadata(tx, uid, vaultID); err != nil {
 				return err
 			}
-			currentManifestHash, _, err := bootstrapManifestTx(tx, vaultID)
+		} else {
+			changes, err := s.uow.ReconcileStrictLiveContentMetadata(tx, uid, vaultID)
 			if err != nil {
 				return err
 			}
-			if currentManifestHash != state.BootstrapManifestHash {
-				return newSafeSyncError(domain.SafeSyncErrorBootstrapStateConflict, "legacy content changed during bootstrap")
+			if len(changes) > 0 {
+				return newSafeSyncError(domain.SafeSyncErrorBootstrapStateConflict, "strict content changed during bootstrap")
 			}
+		}
+		currentManifestHash, _, err := bootstrapManifestTx(tx, vaultID)
+		if err != nil {
+			return err
+		}
+		if currentManifestHash != state.BootstrapManifestHash {
+			return newSafeSyncError(domain.SafeSyncErrorBootstrapStateConflict, "legacy content changed during bootstrap")
 		}
 		updates := clearedBootstrapUpdates(string(domain.VaultSyncStateStrict))
 		updates["activated_at"] = now
@@ -294,6 +309,30 @@ func (s *safeSyncService) BootstrapCommit(ctx context.Context, uid, vaultID int6
 		return nil, err
 	}
 	return safeSyncStatusFromModel(&state, true, uid), nil
+}
+
+func (s *safeSyncService) reconcileStrictLiveContent(tx *gorm.DB, uid, vaultID, latestRevision int64) (int64, error) {
+	changes, err := s.uow.ReconcileStrictLiveContentMetadata(tx, uid, vaultID)
+	if err != nil || len(changes) == 0 {
+		return latestRevision, err
+	}
+	startRevision, endRevision, err := s.uow.AllocateVaultRevisions(tx, vaultID, int64(len(changes)))
+	if err != nil {
+		return latestRevision, err
+	}
+	transactionID := uuid.NewString()
+	operationID := "server-content-reconcile:" + transactionID
+	for index := range changes {
+		resource := &changes[index]
+		resource.ResourceRevision++
+		if err := tx.Save(resource).Error; err != nil {
+			return latestRevision, err
+		}
+		if err := createSafeSyncEvent(tx, resource, "MODIFY", "", startRevision+int64(index), transactionID, operationID); err != nil {
+			return latestRevision, err
+		}
+	}
+	return endRevision, nil
 }
 
 func (s *safeSyncService) BootstrapCancel(ctx context.Context, uid, vaultID int64, sessionID string) (*dto.SafeSyncStatusResponse, error) {

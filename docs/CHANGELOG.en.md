@@ -6,6 +6,17 @@ The project adheres to [Keep a Changelog](https://keepachangelog.com/en/0.3.0/) 
 
 ---
 
+## v3.6.14
+> *2026/08/12*
+
+### Fixed
+
+- **Safe Sync**: Fixed authoritative previews for an already `STRICT` Vault trusting historical safe metadata, which could make the preview manifest hash disagree with the physical `content.txt` / `file.dat` read by recovery packages and then trigger the "remote content changed after preview" execution guard.
+- **Revision Consistency**: Authoritative previews now read the physical note and attachment content. A mismatch atomically updates the legacy Note/File projection, advances the resource and Vault revisions, and emits a normal `MODIFY` event so other devices can receive the reconciliation.
+- **Data Protection**: Authoritative commit reads the physical content again. A post-preview change rolls back the transaction and requires a new preview, while a second unchanged preview remains idempotent and creates no duplicate revision or event.
+
+---
+
 ## v3.6.13
 > *2026/08/12*
 
