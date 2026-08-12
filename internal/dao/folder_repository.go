@@ -51,12 +51,15 @@ func (r *folderRepository) GetByID(ctx context.Context, id, uid int64) (*domain.
 }
 
 func (r *folderRepository) GetByPathHash(ctx context.Context, pathHash string, vaultID, uid int64) (*domain.Folder, error) {
-	f := r.folder(uid).Folder
-	m, err := f.WithContext(ctx).Where(f.VaultID.Eq(vaultID), f.PathHash.Eq(pathHash)).First()
+	db := r.folder(uid).Folder.WithContext(ctx).UnderlyingDB().Model(&model.Folder{})
+	db = r.liveSafeProjection(db, vaultID)
+	var m model.Folder
+	err := db.Where("folder.vault_id = ? AND folder.path_hash = ? AND folder.action <> ?", vaultID, pathHash, "delete").
+		Order("folder.id DESC").Take(&m).Error
 	if err != nil {
 		return nil, err
 	}
-	return r.modelToDomain(m), nil
+	return r.modelToDomain(&m), nil
 }
 
 func (r *folderRepository) GetAllByPathHash(ctx context.Context, pathHash string, vaultID, uid int64) ([]*domain.Folder, error) {
@@ -74,8 +77,10 @@ func (r *folderRepository) GetAllByPathHash(ctx context.Context, pathHash string
 
 func (r *folderRepository) GetByFID(ctx context.Context, fid int64, vaultID, uid int64) ([]*domain.Folder, error) {
 	var ms []*model.Folder
-	f := r.folder(uid).Folder
-	ms, err := f.WithContext(ctx).Where(f.VaultID.Eq(vaultID), f.FID.Eq(fid), f.Action.Neq("delete")).Find()
+	db := r.folder(uid).Folder.WithContext(ctx).UnderlyingDB().Model(&model.Folder{})
+	db = r.liveSafeProjection(db, vaultID)
+	err := db.Where("folder.vault_id = ? AND folder.fid = ? AND folder.action <> ?", vaultID, fid, "delete").
+		Order("folder.id").Find(&ms).Error
 	if err != nil {
 		return nil, err
 	}
@@ -137,8 +142,14 @@ func (r *folderRepository) Delete(ctx context.Context, id, uid int64) error {
 
 func (r *folderRepository) ListByUpdatedTimestamp(ctx context.Context, timestamp, vaultID, uid int64) ([]*domain.Folder, error) {
 	var ms []*model.Folder
-	f := r.folder(uid).Folder
-	ms, err := f.WithContext(ctx).Where(f.VaultID.Eq(vaultID), f.UpdatedTimestamp.Gt(timestamp)).Find()
+	db := r.folder(uid).Folder.WithContext(ctx).UnderlyingDB().Model(&model.Folder{})
+	// Full-tree reads must follow the strict safe-resource projection. Incremental
+	// sync still needs historical delete rows, so it keeps the legacy query.
+	if timestamp == 0 {
+		db = r.liveSafeProjection(db, vaultID)
+	}
+	err := db.Where("folder.vault_id = ? AND folder.updated_timestamp > ?", vaultID, timestamp).
+		Order("folder.id").Find(&ms).Error
 	if err != nil {
 		return nil, err
 	}
@@ -147,6 +158,25 @@ func (r *folderRepository) ListByUpdatedTimestamp(ctx context.Context, timestamp
 		res = append(res, r.modelToDomain(m))
 	}
 	return res, nil
+}
+
+func (r *folderRepository) liveSafeProjection(db *gorm.DB, vaultID int64) *gorm.DB {
+	if !db.Migrator().HasTable(&model.VaultSyncState{}) || !db.Migrator().HasTable(&model.SyncResourceMetadata{}) {
+		return db
+	}
+	var state model.VaultSyncState
+	if err := db.Session(&gorm.Session{NewDB: true}).Model(&model.VaultSyncState{}).
+		Select("state").Where("vault_id = ?", vaultID).Take(&state).Error; err != nil || state.State != string(domain.VaultSyncStateStrict) {
+		return db
+	}
+	// STRICT Vaults use safe metadata as the identity source. This excludes
+	// historical same-path Folder rows without deleting any retained data.
+	return db.Joins(`JOIN sync_resource_metadata AS safe_folder
+		ON safe_folder.vault_id = folder.vault_id
+		AND safe_folder.resource_type = ?
+		AND safe_folder.legacy_id = folder.id
+		AND safe_folder.state = ?
+		AND safe_folder.current_path = folder.path`, string(domain.SyncResourceTypeFolder), string(domain.SyncResourceStateLive))
 }
 
 func (r *folderRepository) ListByPathPrefix(ctx context.Context, pathPrefix string, vaultID, uid int64) ([]*domain.Folder, error) {

@@ -2,10 +2,10 @@
 
 ## 文档状态
 
-- 状态：线上服务端为 `3.6.14`，Windows 已加载插件 `2.5.12`，Android 暂不更新；`3.6.15` / 插件 `2.5.13` 正在修复大 Vault 权威预览超时及预览期间普通同步并发
+- 状态：线上服务端为 `3.6.15`，Windows 已加载插件 `2.5.14`，Android 暂不更新；`3.6.16` / 插件 `2.5.15` 正在修复严格目录投影和权威覆盖后的迟到重复消息
 - 日期：2026-08-12
-- 服务端交付版本：Fast Note Sync Service `3.6.15`
-- Windows 当前版本：Obsidian Fast Note Sync `2.5.12`
+- 服务端交付版本：Fast Note Sync Service `3.6.16`
+- Windows 当前版本：Obsidian Fast Note Sync `2.5.14`
 - 工作分支：两个 fork 均为 `feat/safe-multi-device-sync`
 - 涉及仓库：`fast-note-sync-service`、`obsidian-fast-note-sync`
 - 实施原则：插件端与服务端必须协同修改，不允许只在一端模拟新语义
@@ -24,6 +24,8 @@
 - 服务端 `3.6.13` 修复历史重复或孤儿旧行导致的分裂读取：`STRICT` Vault 启动时以 `SyncResourceMetadata.LegacyID` 为唯一身份，把安全资源当前路径、哈希、大小和父目录投影回旧 Note/File/Folder 表；未被活动安全资源引用的旧行仅标记为旧表删除状态，数据库行和持久卷正文仍保留。修复事务不修改安全资源、事件或 Revision，遇到安全资源缺失或身份断裂会整体回滚并拒绝猜测。
 - 服务端 `3.6.14` 修复另一层历史分裂：已处于 `STRICT` 的 Vault 在权威预览开始时会读取持久卷真实 `content.txt` / `file.dat`。若正文哈希或大小与安全资源不同，会在单事务内校正旧表投影、增加资源和 Vault Revision，并生成正式 `MODIFY` 事件；提交前再次读取正文，预览后漂移会整体回滚，内容未变的重复预览不会重复增版。
 - 服务端 `3.6.15` 将 bootstrap 有效期从 10 分钟提高到 30 分钟。实测 Windows Vault 的 874 项清单包含 737 个附件，逐项计算真实哈希约需 9 分钟；原有效期在预览完成时仅剩约 48 秒，无法安全完成恢复包、提交与覆盖校验。
+- 服务端 `3.6.16` 修复安全清单与 WebGUI 目录树的最后一处读取分裂：`STRICT` Vault 的完整目录树、父目录读取和路径哈希查询只使用仍为 `LIVE` 且 `LegacyID`、当前路径都与 Folder 旧表一致的安全投影。历史同名目录不再把嵌套路径提升到根目录；旧行和持久卷内容继续保留，也不产生新 Revision。
+- 插件 `2.5.15` 处理权威覆盖提交后可能迟到的旧 `UPSERT` 推送。只有远端 payload、本地真实内容和已确认 baseline 的类型、路径与哈希完全相同，并且没有 pending 或待应用事件时才把它作为重复消息归账；任一内容差异仍会 fail-closed。
 - 恢复时若目标 hash 已匹配，则只提交一次资源状态、事件、Vault Revision 和 `COMMITTED` 结果；若替换未完成，则恢复 old-image、移除未完成记录并允许同一 operationId 重新提交。未 `COMMITTED` 的操作不会 ACK 或广播。
 - 客户端 baseline/pending 按 `serverFingerprint + uid + vaultId` 双写持久化；远端事件按 Vault Revision 串行应用，分页中断后从持久化 Revision 重新拉取。
 - 插件 `2.5.9` 修复严格模式重连时仍由旧附件清单触发 `FileUploadChunkBinary` 的问题：启动时先拉取远端修订并按 baseline 安全提交可确认的本地离线变化，再让旧清单通道只承担内容下发；旧 Note/File 上传指令在安全模式下不进入队列。同步期间到达的新 `SafeSyncEvent` 会合并并在当前轮次结束后重拉，不再静默丢失。`Safe*` ACK 使用独立请求 context，不再被旧批量同步 `activeSyncContext` 丢弃。

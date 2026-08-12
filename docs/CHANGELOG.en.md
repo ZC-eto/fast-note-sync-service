@@ -6,6 +6,17 @@ The project adheres to [Keep a Changelog](https://keepachangelog.com/en/0.3.0/) 
 
 ---
 
+## v3.6.16
+> *2026/08/12*
+
+### Fixed
+
+- **Directory Mirror**: Fixed a `STRICT` Vault whose safe manifest contained the correct full paths while WebGUI and legacy folder read APIs could still select a historical same-name Folder row, incorrectly showing nested folders or notes at the root.
+- **Read Consistency**: Strict full-tree, parent-folder, and path-hash reads now accept only Folder projections whose safe resource is still `LIVE` and whose `LegacyID` and current path match. Historical rows and persisted content remain retained, with no data deletion or revision change.
+- **Regression Coverage**: Added tests for deleted same-path history, duplicate active rows, and the strict parent-child projection required by `英语/练习/2026-08-11.md`.
+
+---
+
 ## v3.6.15
 > *2026/08/12*
 
